@@ -3242,6 +3242,8 @@ export default function WarehouseTrackerWithAuth() {
           setCurrentUser(userName);
           setCurrentUserRole(result.role || "");
           setIsLoggedIn(true);
+          // Pull all data from Google Sheets so this device sees everyone's activity
+          syncFromBackend();
           return { success: true };
         } else {
           return { success: false, message: result.message || "Invalid name or PIN" };
@@ -3259,6 +3261,78 @@ export default function WarehouseTrackerWithAuth() {
     setCurrentUser("");
     setCurrentUserRole("");
     setIsLoggedIn(false);
+  };
+
+  // ── Backend helpers ──────────────────────────────────────────────────────
+  // Fire-and-forget POST to Apps Script — never blocks the UI
+  const callBackend = (payload) => {
+    if (IS_DEMO) return;
+    fetch(APPS_SCRIPT_URL, { method: "POST", redirect: "follow", body: JSON.stringify(payload) })
+      .catch(err => console.warn("Backend sync failed:", err));
+  };
+
+  // Pull the full TransactionLog + Inventory from Google Sheets after login
+  // Merges cloud data so every device sees everyone's activity
+  const syncFromBackend = async () => {
+    if (IS_DEMO) return;
+    try {
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        redirect: "follow",
+        body: JSON.stringify({ action: "getAll" }),
+      });
+      const text = await res.text();
+      const result = JSON.parse(text);
+      if (!result.success) return;
+
+      // Merge inventory from Sheets (authoritative) into state
+      if (result.inventory && result.inventory.length > 0) {
+        setInventory(result.inventory);
+        localStorage.setItem("warehouseInventory", JSON.stringify(result.inventory));
+      }
+
+      // Merge transaction log — combine cloud + local, deduplicate by timestamp+itemId
+      if (result.transactions && result.transactions.length > 0) {
+        const cloudLog = result.transactions.map(t => ({
+          timestamp: t.Timestamp || t.timestamp || "",
+          user:      t.UserName  || t.user      || "",
+          action:    t.Action    || t.action    || "",
+          itemId:    t.ItemID    || t.itemId    || "",
+          itemName:  t.ItemName  || t.itemName  || "",
+          qty:       t.Quantity  || t.qty       || 1,
+          notes:     t.Notes     || t.notes     || "",
+          location:  t.location  || "",
+        }));
+
+        setLog(prev => {
+          const existing = new Set(prev.map(e => e.timestamp + e.itemId + e.action));
+          const newEntries = cloudLog.filter(e => !existing.has(e.timestamp + e.itemId + e.action));
+          const merged = [...newEntries, ...prev]
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          localStorage.setItem("warehouseLog", JSON.stringify(merged));
+          return merged;
+        });
+      }
+
+      // Merge access log
+      if (result.accessLog && result.accessLog.length > 0) {
+        const cloudAccess = result.accessLog.map(a => ({
+          timestamp: a.Timestamp || a.timestamp || "",
+          user:      a.UserName  || a.user      || "",
+          reason:    a.Reason    || a.reason    || "",
+        }));
+        setAccessLog(prev => {
+          const existing = new Set(prev.map(e => e.timestamp + e.user));
+          const newEntries = cloudAccess.filter(e => !existing.has(e.timestamp + e.user));
+          const merged = [...newEntries, ...prev]
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          localStorage.setItem("warehouseAccessLog", JSON.stringify(merged));
+          return merged;
+        });
+      }
+    } catch (err) {
+      console.warn("Sync from backend failed:", err);
+    }
   };
 
   if (!isLoggedIn) {
@@ -3573,6 +3647,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           notes: formNotes.trim(), 
           location: `${it.cabinet}-${it.shelf}` 
         }, ...p]);
+        // Sync to Google Sheets so all devices see this
+        callBackend({ action: "checkOut", itemId: it.id, userName: formUser.trim(), notes: formNotes.trim() });
         successCount++;
       } else if (formAction === "return") {
         setInventory(p => p.map(i => 
@@ -3590,6 +3666,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           notes: formNotes.trim(), 
           location: `${it.cabinet}-${it.shelf}` 
         }, ...p]);
+        // Sync to Google Sheets so all devices see this
+        callBackend({ action: "returnItem", itemId: it.id, userName: formUser.trim() });
         successCount++;
       }
     });
@@ -3631,6 +3709,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         notes: consumableNotes.trim(), 
         location: `${it.cabinet}-${it.shelf}` 
       }, ...p]);
+      // Sync to Google Sheets so all devices see this
+      callBackend({ action: "useConsumable", itemId: it.id, userName: consumableUser.trim(), qty: formQty, notes: consumableNotes.trim() });
       successCount++;
     });
 
@@ -3643,6 +3723,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const doAccess = () => {
     if (!accessUser.trim() || !accessPurpose.trim()) return flash("Enter name and purpose", "error");
     setAccessLog(p => [{ timestamp: now(), user: accessUser.trim(), purpose: accessPurpose.trim(), date: today() }, ...p]);
+    callBackend({ action: "logAccess", userName: accessUser.trim(), reason: accessPurpose.trim() });
     flash(`Access logged for ${accessUser.trim()}`);
     setAccessPurpose("");
   };
@@ -3705,6 +3786,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       notes: `Added ${restockQty} units`, 
       location: `${item.cabinet}-${item.shelf}` 
     }, ...p]);
+    callBackend({ action: "restockItem", itemId: restockModal, qty: restockQty, userName: currentUser });
     flash(`${item.item} restocked: +${restockQty} units`);
     setRestockQty(1);
     setRestockModal(null);
