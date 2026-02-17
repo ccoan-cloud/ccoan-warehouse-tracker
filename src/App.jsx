@@ -3347,10 +3347,14 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const [photoPreview, setPhotoPreview] = useState("");
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   
-  const videoRef = useRef(null);
+  const videoRef = useRef(null);          // For Add Item modal barcode
+  const checkoutVideoRef = useRef(null);  // For Checkout/Return scanner
   const streamRef = useRef(null);
+  const checkoutStreamRef = useRef(null);
   const fileInputRef = useRef(null);
   const barcodeIntervalRef = useRef(null);
+  const checkoutBarcodeRef = useRef(null);
+  const [checkoutScannerActive, setCheckoutScannerActive] = useState(false);
 
   const flash = useCallback((msg, type = "success") => {
     setToast({ msg, type });
@@ -3529,6 +3533,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   useEffect(() => {
     return () => {
       stopBarcodeScanner();
+      stopCheckoutScanner();
     };
   }, []);
 
@@ -3705,22 +3710,81 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     setRestockModal(null);
   };
 
-  const doScan = () => {
-    const code = scanInput.trim().toUpperCase();
-    const it = inventory.find(i => i.id.toUpperCase() === code);
-    if (it) { 
-      setFormItems([it.id]); 
-      setScanModal(false); 
-      setScanInput(""); 
-      flash(`Found: ${it.item}`); 
+  // ── Checkout/Return barcode scanner ──────────────────────────────────────
+  const startCheckoutScanner = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      flash("Camera not available on this device.", "error");
+      return;
     }
-    else flash(`No item with code "${code}"`, "error");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      if (checkoutVideoRef.current) {
+        checkoutVideoRef.current.srcObject = stream;
+        checkoutStreamRef.current = stream;
+        setCheckoutScannerActive(true);
+        if ('BarcodeDetector' in window) {
+          const detector = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code'] });
+          detectCheckoutBarcode(detector);
+        } else {
+          flash("Barcode detection not supported. Use Chrome or Edge.", "error");
+          stopCheckoutScanner();
+        }
+      }
+    } catch (err) {
+      flash(err.name === 'NotAllowedError' ? "Camera permission denied." : "Camera failed: " + err.message, "error");
+    }
+  };
+
+  const detectCheckoutBarcode = async (detector) => {
+    if (!checkoutVideoRef.current) return;
+    try {
+      const barcodes = await detector.detect(checkoutVideoRef.current);
+      if (barcodes.length > 0) {
+        const code = barcodes[0].rawValue;
+        stopCheckoutScanner();
+        handleScannedCode(code);
+        return;
+      }
+    } catch (e) {}
+    checkoutBarcodeRef.current = setTimeout(() => detectCheckoutBarcode(detector), 200);
+  };
+
+  const stopCheckoutScanner = () => {
+    if (checkoutStreamRef.current) {
+      checkoutStreamRef.current.getTracks().forEach(t => t.stop());
+      checkoutStreamRef.current = null;
+    }
+    if (checkoutBarcodeRef.current) {
+      clearTimeout(checkoutBarcodeRef.current);
+      checkoutBarcodeRef.current = null;
+    }
+    setCheckoutScannerActive(false);
+  };
+
+  const handleScannedCode = (code) => {
+    const it = inventory.find(i => String(i.id) === String(code) || String(i.id).toUpperCase() === code.toUpperCase());
+    if (it) {
+      setFormItems(prev => prev.includes(it.id) ? prev : [...prev, it.id]);
+      setScanInput("");
+      setScanModal(false);
+      flash(`✓ Scanned: ${it.item}`);
+    } else {
+      setScanInput(code);
+      flash(`Code "${code}" not found — check manually`, "error");
+    }
+  };
+
+  const doScan = () => {
+    const code = scanInput.trim();
+    if (!code) return;
+    handleScannedCode(code);
+    setScanInput("");
   };
 
   // Filters
   const filteredInv = inventory.filter(i => {
     const cab = filterCab === "All" || i.cabinet === filterCab;
-    const s = !search || [i.item, i.id, i.category].some(f => f.toLowerCase().includes(search.toLowerCase()));
+    const s = !search || [i.item, i.id, i.category, i.brand || "", i.model || ""].some(f => String(f).toLowerCase().includes(search.toLowerCase()));
     return cab && s;
   });
   const checkedOut = inventory.filter(i => i.status === "Checked Out");
@@ -3728,7 +3792,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   // Prepare options for multi-select
   const toolOptions = inventory
-    .filter(i => !["Chemicals", "Hardware Bins"].includes(i.category))
+    .filter(i => i.type === "Tool")
     .filter(i => formAction === "checkout" ? i.status === "Available" : i.status === "Checked Out")
     .map(i => ({
       id: i.id,
@@ -3737,7 +3801,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     }));
 
   const consumableOptions = inventory
-    .filter(i => ["Chemicals", "Hardware Bins"].includes(i.category))
+    .filter(i => i.type === "Consumable")
     .map(i => ({
       id: i.id,
       label: `[${i.id}] ${i.item} (qty: ${i.qty})`,
@@ -3821,7 +3885,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           <div style={S.statsGrid}>
             {[
               { n: inventory.length, l: "Total Items", c: C.accent },
-              { n: inventory.filter(i => i.status === "Available").length, l: "Available", c: C.green },
+              { n: inventory.filter(i => i.type === "Tool" ? i.status === "Available" : i.qty > 0).length, l: "Available", c: C.green },
               { n: checkedOut.length, l: "Checked Out", c: C.red },
               { n: inventory.filter(i => i.qty === 0).length, l: "Empty Items", c: C.orange },
               { n: log.length, l: "Transactions", c: C.brandBright },
@@ -4041,7 +4105,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                     <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(i.photoUrl || ""); }} style={S.tiny} title="Photo">📷</button>
-                    {["Chemicals", "Hardware Bins", "Kits"].includes(i.category) && (
+                    {i.type === "Consumable" && (
                       <button onClick={() => { setRestockModal(i.id); setRestockQty(1); }} style={{ ...S.tiny, color: C.green, borderColor: C.green }} title="Restock">+</button>
                     )}
                     <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">✕</button>
@@ -4248,20 +4312,40 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         </div>
       </Modal>
 
-      <Modal open={scanModal} onClose={() => setScanModal(false)} title="Scan or Enter Item Code">
+      <Modal open={scanModal} onClose={() => { setScanModal(false); stopCheckoutScanner(); }} title="📷 Scan Item Barcode">
         <div style={S.mf}>
-          <p style={{ color: C.textMuted, fontSize: 13, marginBottom: 14 }}>
-            Scan the QR code or type the item code manually.
-          </p>
-          <div style={S.f}><label style={S.lbl}>Item Code</label>
+          {/* Camera scanner section */}
+          {!checkoutScannerActive ? (
+            <div style={{ textAlign: "center", marginBottom: 16 }}>
+              <button onClick={startCheckoutScanner} style={{ ...S.pBtn, background: C.brandBright, fontSize: 15 }}>
+                📷 Open Camera Scanner
+              </button>
+              <p style={{ color: C.textMuted, fontSize: 12, marginTop: 8 }}>
+                Point your camera at the item's barcode or QR code
+              </p>
+            </div>
+          ) : (
+            <div style={{ marginBottom: 16 }}>
+              <video ref={checkoutVideoRef} autoPlay playsInline style={{ width: "100%", borderRadius: 8, maxHeight: 240, objectFit: "cover", background: "#000" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                <span style={{ color: C.green, fontSize: 13 }}>📷 Scanning… point at barcode</span>
+                <button onClick={stopCheckoutScanner} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Stop</button>
+              </div>
+            </div>
+          )}
+          {/* Divider */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "12px 0" }}>
+            <div style={{ flex: 1, height: 1, background: C.border }} />
+            <span style={{ color: C.textDim, fontSize: 12 }}>or enter manually</span>
+            <div style={{ flex: 1, height: 1, background: C.border }} />
+          </div>
+          {/* Manual fallback */}
+          <div style={S.f}><label style={S.lbl}>Item Code / Asset Tag ID</label>
             <input type="text" value={scanInput} onChange={e => setScanInput(e.target.value)}
-              placeholder="e.g. A-T-01" style={{ ...S.inp, fontSize: 18, textAlign: "center", letterSpacing: 2 }}
+              placeholder="e.g. 999999930" style={{ ...S.inp, fontSize: 16, textAlign: "center", letterSpacing: 1 }}
               onKeyDown={e => e.key === "Enter" && doScan()} autoFocus/>
           </div>
           <button onClick={doScan} style={S.pBtn}>Look Up Item</button>
-          <p style={{ color: C.textDim, fontSize: 11, marginTop: 10, textAlign: "center" }}>
-            Tip: A QR scanner app can type the code directly into the field above.
-          </p>
         </div>
       </Modal>
 
