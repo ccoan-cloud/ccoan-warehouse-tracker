@@ -3428,6 +3428,9 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const fileInputRef = useRef(null);
   const barcodeIntervalRef = useRef(null);
   const checkoutBarcodeRef = useRef(null);
+  // Refs to track active state inside async loops (avoids stale closure)
+  const scannerActiveRef = useRef(false);
+  const checkoutScannerActiveRef = useRef(false);
   const [checkoutScannerActive, setCheckoutScannerActive] = useState(false);
 
   const flash = useCallback((msg, type = "success") => {
@@ -3460,49 +3463,53 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   const activeUsers = users.filter(u => u.active);
 
-  // V4: Barcode Scanning Functions
+  // ── Add Item barcode scanner ──────────────────────────────────────────────
   const startBarcodeScanner = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      flash("Camera not available. Try using HTTPS or testing on desktop (localhost).", "error");
+      flash("Camera not available on this browser.", "error");
       return;
     }
-
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" }
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        setScannerActive(true);
-        
-        if ('BarcodeDetector' in window) {
-          const barcodeDetector = new window.BarcodeDetector({
-            formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39']
-          });
-          detectBarcode(barcodeDetector);
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      scannerActiveRef.current = true;
+      setScannerActive(true);
+      // Assign stream to video — use a short delay so React renders the <video> first
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+          if ('BarcodeDetector' in window) {
+            const det = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code'] });
+            detectBarcode(det);
+          } else {
+            // BarcodeDetector not supported (Samsung Internet, Firefox)
+            // Camera is live but detection unavailable — user can still see the barcode
+            // and type it manually. Show a helpful message.
+            flash("Live barcode detection not supported on this browser. You can still use the camera to view the barcode and type it below.", "info");
+          }
         } else {
-          flash("Barcode detection not supported on this browser. Try Chrome or Edge.", "error");
+          flash("Camera error: video element not ready. Try again.", "error");
           stopBarcodeScanner();
         }
-      }
+      }, 150);
     } catch (err) {
       console.error("Camera error:", err);
+      scannerActiveRef.current = false;
+      setScannerActive(false);
       if (err.name === 'NotAllowedError') {
-        flash("Camera permission denied. Please allow camera access in browser settings.", "error");
+        flash("Camera permission denied. Go to browser settings → Site settings → Camera → Allow.", "error");
       } else if (err.name === 'NotFoundError') {
         flash("No camera found on this device.", "error");
       } else {
-        flash("Camera access failed: " + err.message, "error");
+        flash("Camera failed: " + err.message, "error");
       }
-      setScannerActive(false);
     }
   };
 
   const detectBarcode = async (detector) => {
-    if (!scannerActive || !videoRef.current) return;
-    
+    // Use ref not state — avoids stale closure in the async loop
+    if (!scannerActiveRef.current || !videoRef.current) return;
     try {
       const barcodes = await detector.detect(videoRef.current);
       if (barcodes.length > 0) {
@@ -3510,19 +3517,17 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         setScannedBarcode(barcode);
         setNi(prev => ({ ...prev, id: barcode }));
         stopBarcodeScanner();
-        flash(`Barcode scanned: ${barcode}`);
+        flash(`✓ Barcode scanned: ${barcode}`);
         return;
       }
-    } catch (err) {
-      console.error("Barcode detection error:", err);
-    }
-    
+    } catch (err) { /* keep scanning */ }
     barcodeIntervalRef.current = setTimeout(() => detectBarcode(detector), 200);
   };
 
   const stopBarcodeScanner = () => {
+    scannerActiveRef.current = false;
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
     if (barcodeIntervalRef.current) {
@@ -3795,30 +3800,45 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   // ── Checkout/Return barcode scanner ──────────────────────────────────────
   const startCheckoutScanner = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      flash("Camera not available on this device.", "error");
+      flash("Camera not available on this browser.", "error");
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      if (checkoutVideoRef.current) {
-        checkoutVideoRef.current.srcObject = stream;
-        checkoutStreamRef.current = stream;
-        setCheckoutScannerActive(true);
-        if ('BarcodeDetector' in window) {
-          const detector = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code'] });
-          detectCheckoutBarcode(detector);
+      checkoutStreamRef.current = stream;
+      checkoutScannerActiveRef.current = true;
+      setCheckoutScannerActive(true);
+      // Short delay so React renders the <video> element before we assign srcObject
+      setTimeout(() => {
+        if (checkoutVideoRef.current) {
+          checkoutVideoRef.current.srcObject = stream;
+          checkoutVideoRef.current.play().catch(() => {});
+          if ('BarcodeDetector' in window) {
+            const detector = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code'] });
+            detectCheckoutBarcode(detector);
+          } else {
+            // No BarcodeDetector — camera is live so user can see barcode and type it
+            flash("Live scanning not supported on this browser — camera is open so you can read the code and type it below.", "info");
+          }
         } else {
-          flash("Barcode detection not supported. Use Chrome or Edge.", "error");
+          flash("Camera error: video element not ready. Try again.", "error");
           stopCheckoutScanner();
         }
-      }
+      }, 150);
     } catch (err) {
-      flash(err.name === 'NotAllowedError' ? "Camera permission denied." : "Camera failed: " + err.message, "error");
+      checkoutScannerActiveRef.current = false;
+      setCheckoutScannerActive(false);
+      if (err.name === 'NotAllowedError') {
+        flash("Camera permission denied. Go to browser settings → Site settings → Camera → Allow.", "error");
+      } else {
+        flash("Camera failed: " + err.message, "error");
+      }
     }
   };
 
   const detectCheckoutBarcode = async (detector) => {
-    if (!checkoutVideoRef.current) return;
+    // Use ref not state — avoids stale closure
+    if (!checkoutScannerActiveRef.current || !checkoutVideoRef.current) return;
     try {
       const barcodes = await detector.detect(checkoutVideoRef.current);
       if (barcodes.length > 0) {
@@ -3827,11 +3847,12 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         handleScannedCode(code);
         return;
       }
-    } catch (e) {}
+    } catch (e) { /* keep scanning */ }
     checkoutBarcodeRef.current = setTimeout(() => detectCheckoutBarcode(detector), 200);
   };
 
   const stopCheckoutScanner = () => {
+    checkoutScannerActiveRef.current = false;
     if (checkoutStreamRef.current) {
       checkoutStreamRef.current.getTracks().forEach(t => t.stop());
       checkoutStreamRef.current = null;
@@ -4022,16 +4043,24 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 />
               </div>
               <div style={S.f}>
-                <label style={S.lbl}>Action *</label>
-                <div style={S.tRow}>
-                  <button onClick={() => { setFormAction("checkout"); setFormItems([]); }}
-                    style={{ ...S.tBtn, ...(formAction === "checkout" ? { background: C.red, color: "#fff", borderColor: C.red } : {}) }}>
-                    ↗ CHECK OUT
-                  </button>
-                  <button onClick={() => { setFormAction("return"); setFormItems([]); }}
-                    style={{ ...S.tBtn, ...(formAction === "return" ? { background: C.green, color: "#fff", borderColor: C.green } : {}) }}>
-                    ↙ RETURN
-                  </button>
+                <label style={S.lbl}>What do you want to do? *</label>
+                <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                  <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 8, border: `2px solid ${formAction === "checkout" ? C.red : C.borderLight}`, background: formAction === "checkout" ? "rgba(224,64,64,0.12)" : C.surface, cursor: "pointer", userSelect: "none" }}
+                    onClick={() => { setFormAction("checkout"); setFormItems([]); }}>
+                    <span style={{ fontSize: 20 }}>{formAction === "checkout" ? "🔴" : "⚪"}</span>
+                    <span>
+                      <strong style={{ color: C.text, display: "block" }}>Check Out</strong>
+                      <span style={{ color: C.textMuted, fontSize: 11 }}>Taking a tool from warehouse</span>
+                    </span>
+                  </label>
+                  <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 8, border: `2px solid ${formAction === "return" ? C.green : C.borderLight}`, background: formAction === "return" ? "rgba(46,170,90,0.12)" : C.surface, cursor: "pointer", userSelect: "none" }}
+                    onClick={() => { setFormAction("return"); setFormItems([]); }}>
+                    <span style={{ fontSize: 20 }}>{formAction === "return" ? "🟢" : "⚪"}</span>
+                    <span>
+                      <strong style={{ color: C.text, display: "block" }}>Return</strong>
+                      <span style={{ color: C.textMuted, fontSize: 11 }}>Bringing a tool back</span>
+                    </span>
+                  </label>
                 </div>
               </div>
             </div>
@@ -4056,9 +4085,15 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               <input type="text" value={formNotes} onChange={e => setFormNotes(e.target.value)} placeholder="e.g. Bathroom repair, Room 201" style={S.inp}/>
             </div>
             
-            <button onClick={doMultiTransaction} style={{ ...S.pBtn, background: formAction === "checkout" ? C.red : C.green }}>
-              {formAction === "checkout" ? "⬆ Confirm Check Out" : "⬇ Confirm Return"} ({formItems.length} item{formItems.length !== 1 ? 's' : ''})
-            </button>
+            <div style={{ marginTop: 8, padding: "12px 16px", background: C.surfaceRaised, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+              <p style={{ color: C.textMuted, fontSize: 12, margin: "0 0 8px 0" }}>
+                ✅ {formItems.length > 0 ? `${formItems.length} item(s) selected — press the button below to confirm` : "Select item(s) above, then press the button below"}
+              </p>
+              <button onClick={doMultiTransaction} 
+                style={{ ...S.pBtn, background: formAction === "checkout" ? C.red : C.green, fontSize: 16, padding: "14px 20px", opacity: formItems.length === 0 ? 0.5 : 1 }}>
+                {formAction === "checkout" ? "⬆ CONFIRM CHECK OUT" : "⬇ CONFIRM RETURN"} ({formItems.length} item{formItems.length !== 1 ? "s" : ""})
+              </button>
+            </div>
           </div>
         </div>)}
 
@@ -4260,23 +4295,24 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       <Modal open={addItemModal} onClose={() => { setAddItemModal(false); stopBarcodeScanner(); setPhotoPreview(""); setScannedBarcode(""); }} title="Add New Inventory Item" wide>
         <div style={S.mf}>
           
-          {/* V4: Barcode Scanner Section */}
+          {/* Barcode Scanner Section — video always in DOM so ref is always available */}
           <div style={{ ...S.scannerSection, marginBottom: 16 }}>
             <label style={S.lbl}>📷 Scan Product Barcode (Optional)</label>
-            {!scannerActive ? (
+            {/* Video always rendered, just hidden — this ensures videoRef.current is never null */}
+            <div style={{ display: scannerActive ? "block" : "none" }}>
+              <div style={S.scannerContainer}>
+                <video ref={videoRef} autoPlay playsInline muted style={S.scannerVideo} />
+                <div style={S.scannerOverlay} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                <span style={{ color: C.green, fontSize: 13 }}>📷 Scanning… point at barcode</span>
+                <button onClick={stopBarcodeScanner} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Stop</button>
+              </div>
+            </div>
+            {!scannerActive && (
               <button onClick={startBarcodeScanner} style={{ ...S.pBtn, background: C.brandBright }}>
                 Start Barcode Scanner
               </button>
-            ) : (
-              <div>
-                <div style={S.scannerContainer}>
-                  <video ref={videoRef} autoPlay playsInline style={S.scannerVideo} />
-                  <div style={S.scannerOverlay} />
-                </div>
-                <button onClick={stopBarcodeScanner} style={{ ...S.smBtn, marginTop: 8, color: C.red, borderColor: C.red }}>
-                  Stop Scanner
-                </button>
-              </div>
             )}
             {scannedBarcode && (
               <p style={{ color: C.green, marginTop: 8, fontSize: 12 }}>
@@ -4396,25 +4432,28 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
       <Modal open={scanModal} onClose={() => { setScanModal(false); stopCheckoutScanner(); }} title="📷 Scan Item Barcode">
         <div style={S.mf}>
-          {/* Camera scanner section */}
-          {!checkoutScannerActive ? (
-            <div style={{ textAlign: "center", marginBottom: 16 }}>
-              <button onClick={startCheckoutScanner} style={{ ...S.pBtn, background: C.brandBright, fontSize: 15 }}>
-                📷 Open Camera Scanner
-              </button>
-              <p style={{ color: C.textMuted, fontSize: 12, marginTop: 8 }}>
-                Point your camera at the item's barcode or QR code
-              </p>
-            </div>
-          ) : (
-            <div style={{ marginBottom: 16 }}>
-              <video ref={checkoutVideoRef} autoPlay playsInline style={{ width: "100%", borderRadius: 8, maxHeight: 240, objectFit: "cover", background: "#000" }} />
+          {/* Camera scanner — video always in DOM so ref is always available */}
+          <div style={{ marginBottom: 16 }}>
+            {/* Always rendered, toggled via CSS display */}
+            <div style={{ display: checkoutScannerActive ? "block" : "none" }}>
+              <video ref={checkoutVideoRef} autoPlay playsInline muted
+                style={{ width: "100%", borderRadius: 8, maxHeight: 260, objectFit: "cover", background: "#000", display: "block" }} />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                <span style={{ color: C.green, fontSize: 13 }}>📷 Scanning… point at barcode</span>
+                <span style={{ color: C.green, fontSize: 13 }}>📷 Scanning… point camera at barcode</span>
                 <button onClick={stopCheckoutScanner} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Stop</button>
               </div>
             </div>
-          )}
+            {!checkoutScannerActive && (
+              <div style={{ textAlign: "center" }}>
+                <button onClick={startCheckoutScanner} style={{ ...S.pBtn, background: C.brandBright, fontSize: 15 }}>
+                  📷 Open Camera Scanner
+                </button>
+                <p style={{ color: C.textMuted, fontSize: 12, marginTop: 8 }}>
+                  Point your camera at the item's barcode or QR code
+                </p>
+              </div>
+            )}
+          </div>
           {/* Divider */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "12px 0" }}>
             <div style={{ flex: 1, height: 1, background: C.border }} />
