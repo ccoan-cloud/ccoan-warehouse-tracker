@@ -3,19 +3,19 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // ============================================================
 // CONFIGURATION
 // ============================================================
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxNfnq1O1w686gX3Uapy-8fpnVijW9fXBApBb0yFwGscCwhKYajXjbyvgI-iJaS1ag/exec";
-const IS_DEMO = APPS_SCRIPT_URL === false;
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkHaRhLjr3WEaHZyBVkGdYLPDKo-DIbdGhtMXSP_Wb2AIdupN92mIUQndVzNJ9O6Wz/exec";
+const IS_DEMO = false;
 
 // Demo mode credentials for testing
 const DEMO_CREDENTIALS = {
-  "Samuel": "8721",
-  "Timotheos": "5678",
-  "MOG Stavros": "9012",
-  "MOG George": "9011",
-  "MOG Giannis": "9010",
-  "Davide": "7890",
-  "Nikos": "5321",
-  "Orlando":"4444"
+  "Sammy": "1234",
+  "Peter": "5678",
+  "John": "9012",
+  "Maria": "3456",
+  "David": "7890",
+  "Sarah": "2468",
+  "Michael": "1357",
+  "Anna": "9876"
 };
 
 // CCOAN Logo
@@ -3118,8 +3118,8 @@ function LoginScreen({ onLogin }) {
           <div style={S.demoInfo}>
             <strong>Demo Mode</strong><br/>
             Test Credentials:<br/>
-            Samuel / 8721 • Timotheos / 5678<br/>
-            MOG Stavros / 9012 • Davide / 7890 • Nikos / 5321
+            Sammy / 1234 • Peter / 5678<br/>
+            John / 9012 • David / 7890
           </div>
         )}
         
@@ -3221,9 +3221,11 @@ export default function WarehouseTrackerWithAuth() {
       }
     } else {
       try {
+        // CORS fix: omit Content-Type header so this stays a "simple request"
+        // Apps Script cannot handle CORS preflight (OPTIONS) triggered by application/json
         const response = await fetch(APPS_SCRIPT_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          redirect: "follow",
           body: JSON.stringify({
             action: "login",
             userName: userName,
@@ -3231,7 +3233,8 @@ export default function WarehouseTrackerWithAuth() {
           }),
         });
         
-        const result = await response.json();
+        const text = await response.text();
+        const result = JSON.parse(text);
         
         if (result.success) {
           sessionStorage.setItem("warehouseUser", userName);
@@ -3244,7 +3247,8 @@ export default function WarehouseTrackerWithAuth() {
           return { success: false, message: result.message || "Invalid name or PIN" };
         }
       } catch (err) {
-        return { success: false, message: "Login failed. Please try again." };
+        console.error("Login error:", err);
+        return { success: false, message: "Cannot reach server. Check your internet connection or try again." };
       }
     }
   };
@@ -3500,7 +3504,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       
       const response = await fetch(APPS_SCRIPT_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        redirect: "follow",
         body: JSON.stringify({
           action: "uploadPhoto",
           fileName: file.name,
@@ -3509,7 +3513,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         }),
       });
       
-      const result = await response.json();
+      const text = await response.text();
+      const result = JSON.parse(text);
       return result.success ? result.photoUrl : null;
     } catch (err) {
       console.error("Photo upload error:", err);
