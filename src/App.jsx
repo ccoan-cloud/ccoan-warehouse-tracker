@@ -3514,9 +3514,20 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       const barcodes = await detector.detect(videoRef.current);
       if (barcodes.length > 0) {
         const barcode = barcodes[0].rawValue;
+        stopBarcodeScanner();
+        
+        // ✅ Check for duplicates immediately after scanning
+        const exists = inventory.find(i => String(i.id).toUpperCase() === String(barcode).toUpperCase());
+        if (exists) {
+          flash(`⚠️ Item ID "${barcode}" already exists: ${exists.item}. Choose a different item or edit the existing one.`, "error");
+          setScannedBarcode("");
+          setNi(prev => ({ ...prev, id: "" }));
+          return;
+        }
+        
+        // ID is unique — proceed
         setScannedBarcode(barcode);
         setNi(prev => ({ ...prev, id: barcode }));
-        stopBarcodeScanner();
         flash(`✓ Barcode scanned: ${barcode}`);
         return;
       }
@@ -3736,8 +3747,11 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const doAddItem = () => {
     if (!ni.id.trim() || !ni.item.trim()) return flash("ID and item name required", "error");
     if (inventory.find(i => i.id === ni.id.trim())) return flash("Item ID already exists", "error");
-    setInventory(p => [...p, { ...ni, id: ni.id.trim(), item: ni.item.trim(), status: "Available", checkedOutBy: null, checkedOutAt: null }]);
+    const newItem = { ...ni, id: ni.id.trim(), item: ni.item.trim(), status: "Available", checkedOutBy: null, checkedOutAt: null };
+    setInventory(p => [...p, newItem]);
     setLog(p => [{ timestamp: now(), user: currentUser, action: "added", itemId: ni.id.trim(), itemName: ni.item.trim(), qty: ni.qty, notes: `New item. Brand: ${ni.brand || "none"}. Model: ${ni.model || "none"}. Photo: ${ni.photoUrl || "none"}. Barcode: ${scannedBarcode || "none"}`, location: (ni.cabinet || ni.shelf) ? `${ni.cabinet}-${ni.shelf}` : "No location" }, ...p]);
+    // ✅ Sync to Google Sheets so all devices see the new item
+    callBackend({ action: "addItem", item: newItem });
     flash(`${ni.item.trim()} added successfully!`);
     
     setNi({ id: "", item: "", brand: "", model: "", serialNo: "", category: "Equipment", type: "Tool", cabinet: "", shelf: "", qty: 1, photoUrl: "" });
@@ -3751,6 +3765,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     const it = inventory.find(i => i.id === id);
     setInventory(p => p.filter(i => i.id !== id));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "deleted", itemId: id, itemName: it?.item || id, qty: 0, notes: "Removed", location: "" }, ...p]);
+    // ✅ Sync to Google Sheets
+    callBackend({ action: "deleteItem", itemId: id });
     flash(`${it?.item || id} removed`);
     setConfirmDel(null);
   };
@@ -3760,6 +3776,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     if (!nu.pin.trim() || nu.pin.length !== 4) return flash("4-digit PIN required", "error");
     if (users.find(u => u.name.toLowerCase() === nu.name.trim().toLowerCase())) return flash("User exists", "error");
     setUsers(p => [...p, { name: nu.name.trim(), role: nu.role, pin: nu.pin, active: true }]);
+    // ✅ Sync to Google Sheets so the new user can log in from any device
+    callBackend({ action: "addUser", userName: nu.name.trim(), role: nu.role, pin: nu.pin });
     flash(`${nu.name.trim()} added`);
     setNu({ name: "", role: "Maintenance", pin: "" });
     setAddUserModal(false);
@@ -3945,6 +3963,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         ref={fileInputRef}
         type="file"
         accept="image/jpeg,image/png,image/gif"
+        capture="environment"
         onChange={handlePhotoCapture}
         style={{ display: "none" }}
       />
@@ -4364,7 +4383,18 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
           <div style={S.mRow}>
             <div style={S.f}><label style={S.lbl}>Quantity</label>
-              <input type="number" min="1" value={ni.qty} onChange={e => setNi({ ...ni, qty: parseInt(e.target.value) || 1 })} style={S.inp}/>
+              <input 
+                type="text" 
+                inputMode="numeric" 
+                pattern="[0-9]*" 
+                value={ni.qty} 
+                onChange={e => {
+                  const val = e.target.value.replace(/[^0-9]/g, '');
+                  setNi({ ...ni, qty: parseInt(val) || 1 });
+                }}
+                style={{ ...S.inp, fontSize: 16 }}
+                placeholder="1"
+              />
             </div>
           </div>
 
