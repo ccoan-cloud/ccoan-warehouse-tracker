@@ -3265,10 +3265,33 @@ export default function WarehouseTrackerWithAuth() {
 
   // ── Backend helpers ──────────────────────────────────────────────────────
   // Fire-and-forget POST to Apps Script — never blocks the UI
-  const callBackend = (payload) => {
+  const callBackend = async (payload) => {
     if (IS_DEMO) return;
-    fetch(APPS_SCRIPT_URL, { method: "POST", redirect: "follow", body: JSON.stringify(payload) })
-      .catch(err => console.warn("Backend sync failed:", err));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, { 
+        method: "POST", 
+        redirect: "follow", 
+        body: JSON.stringify(payload) 
+      });
+      
+      // Check if request succeeded
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const text = await response.text();
+      const result = JSON.parse(text);
+      
+      if (!result.success) {
+        console.error("Backend error:", result.message || "Unknown error", payload);
+        // Don't show error toast for every background sync — too annoying
+        // But log it so we can debug
+      }
+    } catch (err) {
+      console.error("❌ Backend sync failed:", err.message, payload);
+      // Show error only for critical actions, not background syncs
+      // Background failures are logged but don't interrupt the user
+    }
   };
 
   // Pull the full TransactionLog + Inventory from Google Sheets after login
@@ -3968,7 +3991,10 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         style={{ display: "none" }}
       />
 
-      {toast && <div style={{ ...S.toast, background: toast.type === "error" ? C.red : C.green }}>{toast.msg}</div>}
+      {toast && <div style={{ 
+        ...S.toast, 
+        background: toast.type === "error" ? C.red : toast.type === "info" ? C.accent : C.green 
+      }}>{toast.msg}</div>}
 
       <header style={S.header}>
         <div style={S.headerInner}>
@@ -4004,6 +4030,18 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {/* ---- DASHBOARD ---- */}
         {view === "dashboard" && (<div>
           <h2 style={S.pageTitle}>Dashboard</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div></div>
+            <button 
+              onClick={async () => { 
+                flash("Syncing with Google Sheets...", "info"); 
+                await syncFromBackend(); 
+                flash("✓ Sync complete — refreshed from server"); 
+              }} 
+              style={{ ...S.smBtn, color: C.accent, borderColor: C.accent }}>
+              🔄 Sync Now
+            </button>
+          </div>
           <div style={S.statsGrid}>
             {[
               { n: inventory.length, l: "Total Items", c: C.accent },
