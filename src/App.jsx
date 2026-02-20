@@ -3401,6 +3401,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   // Modals
   const [addItemModal, setAddItemModal] = useState(false);
+  const [editItemModal, setEditItemModal] = useState(false);
+  const [editItem, setEditItem] = useState(null);
   const [addUserModal, setAddUserModal] = useState(false);
   const [photoModal, setPhotoModal] = useState(null);
   const [scanModal, setScanModal] = useState(false);
@@ -3784,12 +3786,26 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     setAddItemModal(false);
   };
 
+  const doEditItem = () => {
+    if (!editItem) return;
+    if (!editItem.id.trim() || !editItem.item.trim()) return flash("ID and item name required", "error");
+    const conflict = inventory.find(i => i.id === editItem.id.trim() && i.id !== editItem._originalId);
+    if (conflict) return flash("Another item already uses this ID", "error");
+    const updatedItem = { ...editItem, id: editItem.id.trim(), item: editItem.item.trim(), type: detectType(editItem.category) };
+    delete updatedItem._originalId;
+    setInventory(p => p.map(i => i.id === editItem._originalId ? updatedItem : i));
+    setLog(p => [{ timestamp: now(), user: currentUser, action: "edited", itemId: updatedItem.id, itemName: updatedItem.item, qty: updatedItem.qty, notes: `Item updated`, location: "" }, ...p]);
+    callBackend({ action: "updateItem", item: updatedItem });
+    flash(`${updatedItem.item} updated`);
+    setEditItemModal(false);
+    setEditItem(null);
+  };
+
   const doDeleteItem = (id) => {
     const it = inventory.find(i => i.id === id);
     setInventory(p => p.filter(i => i.id !== id));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "deleted", itemId: id, itemName: it?.item || id, qty: 0, notes: "Removed", location: "" }, ...p]);
     // ✅ Sync to Google Sheets
-    callBackend({ action: "deleteItem", itemId: id });
     callBackend({ action: "deleteItem", itemId: id });
     flash(`${it?.item || id} removed`);
     setConfirmDel(null);
@@ -4265,7 +4281,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             </div>
           </div>
           <div style={S.tw}><table style={S.tbl}><thead><tr>
-            <th style={S.th}>Code</th><th style={S.th}>Item</th><th style={S.th}>Brand</th><th style={S.th}>Model</th><th style={S.th}>Category</th><th style={S.th}>Location</th>
+            <th style={S.th}>Code</th><th style={S.th}>Item</th><th style={S.th}>Brand</th><th style={S.th}>Model</th><th style={S.th}>Category</th>
+            <th style={S.th}>Cabinet / Shelf</th>
             <th style={S.th}>Qty</th><th style={S.th}>Status</th><th style={S.th}>Photo</th><th style={S.th}>Held By</th><th style={S.th}>Actions</th>
           </tr></thead><tbody>
             {filteredInv.map(i => (
@@ -4286,6 +4303,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}>{i.checkedOutBy || "—"}</td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">✏️</button>
                     <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(i.photoUrl || ""); }} style={S.tiny} title="Photo">📷</button>
                     {i.type === "Consumable" && (
                       <button onClick={() => { setRestockModal(i.id); setRestockQty(1); }} style={{ ...S.tiny, color: C.green, borderColor: C.green }} title="Restock">+</button>
@@ -4410,20 +4428,18 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           </div>
 
           <div style={S.mRow}>
-            <div style={S.f}><label style={S.lbl}>Cabinet (optional)</label>
-              <input type="text" value={ni.cabinet} onChange={e => setNi({ ...ni, cabinet: e.target.value })} 
-                placeholder="e.g. Main Warehouse, Storage Room 2" style={S.inp}/>
-              <span style={S.hint}>Leave blank if item has no specific location</span>
-            </div>
-            <div style={S.f}><label style={S.lbl}>Shelf (optional)</label>
-              <input type="text" value={ni.shelf} onChange={e => setNi({ ...ni, shelf: e.target.value })} 
-                placeholder="e.g. Top Shelf, Rack 3" style={S.inp}/>
-              <span style={S.hint}>Leave blank if not applicable</span>
-            </div>
             <div style={S.f}><label style={S.lbl}>Category</label>
               <select value={ni.category} onChange={e => setNi({ ...ni, category: e.target.value, type: detectType(e.target.value) })} style={S.sel}>
                 {["Adhesive","Cleaner","Door/Hardware","Electrical","Equipment","Filler & Putty","Floor Care/Wood & Parquet Wax","Furniture and fixtures","Lubricant","Networking equipment (router/VPN gateway)","Paint","Paint Remover","Sealant","Spray","Tiling materials","Wood Oil/Finish","Wood Stain"].map(c => <option key={c}>{c}</option>)}
               </select>
+            </div>
+            <div style={S.f}><label style={S.lbl}>Cabinet (optional)</label>
+              <input type="text" value={ni.cabinet} onChange={e => setNi({ ...ni, cabinet: e.target.value })}
+                placeholder="e.g. A, B, Door, Floor" style={S.inp}/>
+            </div>
+            <div style={S.f}><label style={S.lbl}>Shelf (optional)</label>
+              <input type="text" value={ni.shelf} onChange={e => setNi({ ...ni, shelf: e.target.value })}
+                placeholder="e.g. Top, Middle, Rack 3" style={S.inp}/>
             </div>
           </div>
 
@@ -4469,6 +4485,70 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
           <button onClick={doAddItem} style={S.pBtn}>Add to Inventory</button>
         </div>
+      </Modal>
+
+      {/* ── Edit Inventory Item Modal ── */}
+      <Modal open={editItemModal} onClose={() => { setEditItemModal(false); setEditItem(null); }} title="Edit Inventory Item" wide>
+        {editItem && (
+          <div style={S.mf}>
+            <div style={S.mRow}>
+              <div style={S.f}><label style={S.lbl}>Item ID / Code</label>
+                <input type="text" value={editItem.id} onChange={e => setEditItem({ ...editItem, id: e.target.value })} style={S.inp}/>
+                <span style={S.hint}>Changing the ID will update it everywhere</span>
+              </div>
+              <div style={S.f}><label style={S.lbl}>Item Name *</label>
+                <input type="text" value={editItem.item} onChange={e => setEditItem({ ...editItem, item: e.target.value })} style={S.inp}/>
+              </div>
+            </div>
+            <div style={S.mRow}>
+              <div style={S.f}><label style={S.lbl}>Brand</label>
+                <input type="text" value={editItem.brand || ''} onChange={e => setEditItem({ ...editItem, brand: e.target.value })} style={S.inp}/>
+              </div>
+              <div style={S.f}><label style={S.lbl}>Model</label>
+                <input type="text" value={editItem.model || ''} onChange={e => setEditItem({ ...editItem, model: e.target.value })} style={S.inp}/>
+              </div>
+            </div>
+            <div style={S.f}><label style={S.lbl}>Serial Number</label>
+              <input type="text" value={editItem.serialNo || ''} onChange={e => setEditItem({ ...editItem, serialNo: e.target.value })} style={S.inp}/>
+            </div>
+            <div style={S.mRow}>
+              <div style={S.f}><label style={S.lbl}>Category</label>
+                <select value={editItem.category} onChange={e => setEditItem({ ...editItem, category: e.target.value, type: detectType(e.target.value) })} style={S.sel}>
+                  {["Adhesive","Cleaner","Door/Hardware","Electrical","Equipment","Filler & Putty","Floor Care/Wood & Parquet Wax","Furniture and fixtures","Lubricant","Networking equipment (router/VPN gateway)","Paint","Paint Remover","Sealant","Spray","Tiling materials","Wood Oil/Finish","Wood Stain"].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={S.f}><label style={S.lbl}>Quantity</label>
+                <input
+                  type="text" inputMode="numeric" pattern="[0-9]*"
+                  value={editItem.qty}
+                  onChange={e => setEditItem({ ...editItem, qty: parseInt(e.target.value.replace(/[^0-9]/g, '')) || 0 })}
+                  style={{ ...S.inp, fontSize: 16 }}
+                />
+              </div>
+              <div style={S.f}><label style={S.lbl}>Status</label>
+                <select value={editItem.status || 'Available'} onChange={e => setEditItem({ ...editItem, status: e.target.value })} style={S.sel}>
+                  {["Available","Checked Out","Under Maintenance","Retired"].map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={S.mRow}>
+              <div style={S.f}><label style={S.lbl}>Cabinet (optional)</label>
+                <input type="text" value={editItem.cabinet || ''} onChange={e => setEditItem({ ...editItem, cabinet: e.target.value })} placeholder="e.g. A, B, Door, Floor" style={S.inp}/>
+              </div>
+              <div style={S.f}><label style={S.lbl}>Shelf (optional)</label>
+                <input type="text" value={editItem.shelf || ''} onChange={e => setEditItem({ ...editItem, shelf: e.target.value })} placeholder="e.g. Top, Middle, Rack 3" style={S.inp}/>
+              </div>
+            </div>
+            <div style={S.f}><label style={S.lbl}>Photo URL</label>
+              <input type="text" value={editItem.photoUrl || ''} onChange={e => setEditItem({ ...editItem, photoUrl: e.target.value })} placeholder="https://..." style={S.inp}/>
+              <span style={S.hint}>Paste a direct link or leave as-is to keep existing photo</span>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+              <button onClick={doEditItem} style={S.pBtn}>💾 Save Changes</button>
+              <button onClick={() => { setEditItemModal(false); setEditItem(null); }} style={S.smBtn}>Cancel</button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <Modal open={addUserModal} onClose={() => setAddUserModal(false)} title="Add New User">
