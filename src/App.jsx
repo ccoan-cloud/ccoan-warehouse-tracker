@@ -29,14 +29,34 @@ async function syncFromBackend(setInventory, setLog, setAccessLog) {
     const res = await fetch(APPS_SCRIPT_URL, { method: "POST", redirect: "follow", body: JSON.stringify({ action: "getAll" }) });
     const result = JSON.parse(await res.text());
     if (!result.success) return;
-    
+
+    // Helper to derive a readable date from a timestamp string
+    const deriveDate = (ts) => {
+      if (!ts) return "";
+      try {
+        return new Date(ts).toISOString().slice(0, 10);
+      } catch { return ts.slice(0, 10) || ""; }
+    };
+
+    // Helper to format timestamp for display (strip trailing Z/ms if ISO)
+    const formatTs = (ts) => {
+      if (!ts) return "";
+      // Already a readable format like "2026-02-20 14:21:45"? Return as-is
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(ts)) return ts;
+      try {
+        return new Date(ts).toISOString().slice(0, 19).replace("T", " ");
+      } catch { return ts; }
+    };
+
+    // Backend is the source of truth — replace local data entirely
     if (result.inventory?.length > 0) {
       setInventory(result.inventory);
       localStorage.setItem('warehouseInventory', JSON.stringify(result.inventory));
     }
+
     if (result.transactions?.length > 0) {
       const trans = result.transactions.map(t => ({
-        timestamp: t.Timestamp || t.timestamp || "",
+        timestamp: formatTs(t.Timestamp || t.timestamp || ""),
         user: t.UserName || t.user || "",
         action: t.Action || t.action || "",
         itemId: t.ItemID || t.itemId || "",
@@ -44,28 +64,23 @@ async function syncFromBackend(setInventory, setLog, setAccessLog) {
         qty: t.Quantity || t.qty || 1,
         notes: t.Notes || t.notes || "",
         location: t.location || ""
-      }));
-      setLog(prev => {
-        const keys = new Set(prev.map(t => `${t.timestamp}|${t.itemId}|${t.action}`));
-        const merged = [...trans.filter(t => !keys.has(`${t.timestamp}|${t.itemId}|${t.action}`)), ...prev]
-          .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-        localStorage.setItem('warehouseLog', JSON.stringify(merged));
-        return merged;
-      });
+      })).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      setLog(trans);
+      localStorage.setItem('warehouseLog', JSON.stringify(trans));
     }
+
     if (result.accessLog?.length > 0) {
-      const access = result.accessLog.map(a => ({
-        timestamp: a.Timestamp || a.timestamp || "",
-        user: a.UserName || a.user || "",
-        reason: a.Reason || a.reason || ""
-      }));
-      setAccessLog(prev => {
-        const keys = new Set(prev.map(a => `${a.timestamp}|${a.user}`));
-        const merged = [...access.filter(a => !keys.has(`${a.timestamp}|${a.user}`)), ...prev]
-          .sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-        localStorage.setItem('warehouseAccessLog', JSON.stringify(merged));
-        return merged;
-      });
+      const access = result.accessLog.map(a => {
+        const ts = formatTs(a.Timestamp || a.timestamp || "");
+        return {
+          timestamp: ts,
+          date: deriveDate(a.Timestamp || a.timestamp || ""),
+          user: a.UserName || a.user || "",
+          purpose: a.Reason || a.reason || a.Purpose || a.purpose || ""
+        };
+      }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      setAccessLog(access);
+      localStorage.setItem('warehouseAccessLog', JSON.stringify(access));
     }
   } catch (err) {
     console.error("Sync error:", err.message);
@@ -3458,6 +3473,17 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     localStorage.setItem('warehouseAccessLog', JSON.stringify(accessLog));
   }, [accessLog]);
 
+  // ── Auto-sync from backend every 60 seconds ──────────────────────────────
+  useEffect(() => {
+    if (IS_DEMO) return;
+    // Initial sync on mount
+    syncFromBackend(setInventory, setLog, setAccessLog);
+    const interval = setInterval(() => {
+      syncFromBackend(setInventory, setLog, setAccessLog);
+    }, 60000); // 60 seconds
+    return () => clearInterval(interval);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const activeUsers = users.filter(u => u.active);
 
   // ── Add Item barcode scanner ──────────────────────────────────────────────
@@ -3737,7 +3763,6 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     if (!accessUser.trim() || !accessPurpose.trim()) return flash("Enter name and purpose", "error");
     setAccessLog(p => [{ timestamp: now(), user: accessUser.trim(), purpose: accessPurpose.trim(), date: today() }, ...p]);
     callBackend({ action: "logAccess", userName: accessUser.trim(), reason: accessPurpose.trim() });
-    callBackend({ action: "logAccess", userName: accessUser.trim(), reason: accessPurpose.trim() });
     flash(`Access logged for ${accessUser.trim()}`);
     setAccessPurpose("");
   };
@@ -3749,7 +3774,6 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     setInventory(p => [...p, newItem]);
     setLog(p => [{ timestamp: now(), user: currentUser, action: "added", itemId: ni.id.trim(), itemName: ni.item.trim(), qty: ni.qty, notes: `New item. Brand: ${ni.brand || "none"}. Model: ${ni.model || "none"}. Photo: ${ni.photoUrl || "none"}. Barcode: ${scannedBarcode || "none"}`, location: (ni.cabinet || ni.shelf) ? `${ni.cabinet}-${ni.shelf}` : "No location" }, ...p]);
     // ✅ Sync to Google Sheets so all devices see the new item
-    callBackend({ action: "addItem", item: newItem });
     callBackend({ action: "addItem", item: newItem });
     flash(`${ni.item.trim()} added successfully!`);
     
@@ -4006,9 +4030,23 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {/* ---- DASHBOARD ---- */}
         {view === "dashboard" && (<div>
           <h2 style={S.pageTitle}>Dashboard</h2>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-            <button onClick={() => { flash("Syncing...", "info"); syncFromBackend(setInventory, setLog, setAccessLog); setTimeout(() => flash("✓ Synced"), 500); }} 
-              style={{ ...S.smBtn, color: C.accent, borderColor: C.accent }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 16 }}>
+            <button onClick={() => {
+              if (!window.confirm("Clear local cache and re-sync from server? This will discard any unsynced local-only data.")) return;
+              localStorage.removeItem('warehouseInventory');
+              localStorage.removeItem('warehouseLog');
+              localStorage.removeItem('warehouseAccessLog');
+              flash("Cache cleared — syncing from server...", "info");
+              syncFromBackend(setInventory, setLog, setAccessLog);
+              setTimeout(() => flash("✓ Synced fresh from server"), 1500);
+            }} style={{ ...S.smBtn, color: C.orange, borderColor: C.orange }}>
+              🗑 Clear Local Cache
+            </button>
+            <button onClick={async () => {
+              flash("Syncing...", "info");
+              await syncFromBackend(setInventory, setLog, setAccessLog);
+              flash("✓ Synced");
+            }} style={{ ...S.smBtn, color: C.accent, borderColor: C.accent }}>
               🔄 Sync Now
             </button>
           </div>
@@ -4202,8 +4240,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <th style={S.th}>Date</th><th style={S.th}>Time</th><th style={S.th}>Person</th><th style={S.th}>Purpose</th>
               </tr></thead><tbody>
                 {accessLog.map((a, i) => <tr key={i}>
-                  <td style={S.td}>{a.date}</td><td style={S.td}>{a.timestamp}</td>
-                  <td style={{ ...S.td, fontWeight: 600 }}>{a.user}</td><td style={S.td}>{a.purpose}</td>
+                  <td style={S.td}>{a.date || (a.timestamp ? a.timestamp.slice(0, 10) : "")}</td><td style={S.td}>{a.timestamp}</td>
+                  <td style={{ ...S.td, fontWeight: 600 }}>{a.user}</td><td style={S.td}>{a.purpose || a.reason || ""}</td>
                 </tr>)}
               </tbody></table></div>
             )}
