@@ -6,6 +6,102 @@ import { useState, useEffect, useCallback, useRef } from "react";
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkHaRhLjr3WEaHZyBVkGdYLPDKo-DIbdGhtMXSP_Wb2AIdupN92mIUQndVzNJ9O6Wz/exec";
 const IS_DEMO = false;
 
+  // ── Backend helpers ──────────────────────────────────────────────────────
+  // Fire-and-forget POST to Apps Script — never blocks the UI
+  const callBackend = async (payload) => {
+    if (IS_DEMO) return;
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, { 
+        method: "POST", 
+        redirect: "follow", 
+        body: JSON.stringify(payload) 
+      });
+      
+      // Check if request succeeded
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const text = await response.text();
+      const result = JSON.parse(text);
+      
+      if (!result.success) {
+        console.error("Backend error:", result.message || "Unknown error", payload);
+        // Don't show error toast for every background sync — too annoying
+        // But log it so we can debug
+      }
+    } catch (err) {
+      console.error("❌ Backend sync failed:", err.message, payload);
+      // Show error only for critical actions, not background syncs
+      // Background failures are logged but don't interrupt the user
+    }
+  };
+
+  // Pull the full TransactionLog + Inventory from Google Sheets after login
+  // Merges cloud data so every device sees everyone's activity
+  const syncFromBackend = async () => {
+    if (IS_DEMO) return;
+    try {
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        redirect: "follow",
+        body: JSON.stringify({ action: "getAll" }),
+      });
+      const text = await res.text();
+      const result = JSON.parse(text);
+      if (!result.success) return;
+
+      // Merge inventory from Sheets (authoritative) into state
+      if (result.inventory && result.inventory.length > 0) {
+        setInventory(result.inventory);
+        localStorage.setItem("warehouseInventory", JSON.stringify(result.inventory));
+      }
+
+      // Merge transaction log — combine cloud + local, deduplicate by timestamp+itemId
+      if (result.transactions && result.transactions.length > 0) {
+        const cloudLog = result.transactions.map(t => ({
+          timestamp: t.Timestamp || t.timestamp || "",
+          user:      t.UserName  || t.user      || "",
+          action:    t.Action    || t.action    || "",
+          itemId:    t.ItemID    || t.itemId    || "",
+          itemName:  t.ItemName  || t.itemName  || "",
+          qty:       t.Quantity  || t.qty       || 1,
+          notes:     t.Notes     || t.notes     || "",
+          location:  t.location  || "",
+        }));
+
+        setLog(prev => {
+          const existing = new Set(prev.map(e => e.timestamp + e.itemId + e.action));
+          const newEntries = cloudLog.filter(e => !existing.has(e.timestamp + e.itemId + e.action));
+          const merged = [...newEntries, ...prev]
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          localStorage.setItem("warehouseLog", JSON.stringify(merged));
+          return merged;
+        });
+      }
+
+      // Merge access log
+      if (result.accessLog && result.accessLog.length > 0) {
+        const cloudAccess = result.accessLog.map(a => ({
+          timestamp: a.Timestamp || a.timestamp || "",
+          user:      a.UserName  || a.user      || "",
+          reason:    a.Reason    || a.reason    || "",
+        }));
+        setAccessLog(prev => {
+          const existing = new Set(prev.map(e => e.timestamp + e.user));
+          const newEntries = cloudAccess.filter(e => !existing.has(e.timestamp + e.user));
+          const merged = [...newEntries, ...prev]
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          localStorage.setItem("warehouseAccessLog", JSON.stringify(merged));
+          return merged;
+        });
+      }
+    } catch (err) {
+      console.warn("Sync from backend failed:", err);
+    }
+  };
+
+
 // Demo mode credentials for testing
 const DEMO_CREDENTIALS = {
   "Sammy": "1234",
@@ -3262,113 +3358,19 @@ export default function WarehouseTrackerWithAuth() {
     setIsLoggedIn(false);
   };
 
-  // ── Backend helpers ──────────────────────────────────────────────────────
-  // Fire-and-forget POST to Apps Script — never blocks the UI
-  const callBackend = async (payload) => {
-    if (IS_DEMO) return;
-    try {
-      const response = await fetch(APPS_SCRIPT_URL, { 
-        method: "POST", 
-        redirect: "follow", 
-        body: JSON.stringify(payload) 
-      });
-      
-      // Check if request succeeded
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const text = await response.text();
-      const result = JSON.parse(text);
-      
-      if (!result.success) {
-        console.error("Backend error:", result.message || "Unknown error", payload);
-        // Don't show error toast for every background sync — too annoying
-        // But log it so we can debug
-      }
-    } catch (err) {
-      console.error("❌ Backend sync failed:", err.message, payload);
-      // Show error only for critical actions, not background syncs
-      // Background failures are logged but don't interrupt the user
-    }
-  };
-
-  // Pull the full TransactionLog + Inventory from Google Sheets after login
-  // Merges cloud data so every device sees everyone's activity
-  const syncFromBackend = async () => {
-    if (IS_DEMO) return;
-    try {
-      const res = await fetch(APPS_SCRIPT_URL, {
-        method: "POST",
-        redirect: "follow",
-        body: JSON.stringify({ action: "getAll" }),
-      });
-      const text = await res.text();
-      const result = JSON.parse(text);
-      if (!result.success) return;
-
-      // Merge inventory from Sheets (authoritative) into state
-      if (result.inventory && result.inventory.length > 0) {
-        setInventory(result.inventory);
-        localStorage.setItem("warehouseInventory", JSON.stringify(result.inventory));
-      }
-
-      // Merge transaction log — combine cloud + local, deduplicate by timestamp+itemId
-      if (result.transactions && result.transactions.length > 0) {
-        const cloudLog = result.transactions.map(t => ({
-          timestamp: t.Timestamp || t.timestamp || "",
-          user:      t.UserName  || t.user      || "",
-          action:    t.Action    || t.action    || "",
-          itemId:    t.ItemID    || t.itemId    || "",
-          itemName:  t.ItemName  || t.itemName  || "",
-          qty:       t.Quantity  || t.qty       || 1,
-          notes:     t.Notes     || t.notes     || "",
-          location:  t.location  || "",
-        }));
-
-        setLog(prev => {
-          const existing = new Set(prev.map(e => e.timestamp + e.itemId + e.action));
-          const newEntries = cloudLog.filter(e => !existing.has(e.timestamp + e.itemId + e.action));
-          const merged = [...newEntries, ...prev]
-            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-          localStorage.setItem("warehouseLog", JSON.stringify(merged));
-          return merged;
-        });
-      }
-
-      // Merge access log
-      if (result.accessLog && result.accessLog.length > 0) {
-        const cloudAccess = result.accessLog.map(a => ({
-          timestamp: a.Timestamp || a.timestamp || "",
-          user:      a.UserName  || a.user      || "",
-          reason:    a.Reason    || a.reason    || "",
-        }));
-        setAccessLog(prev => {
-          const existing = new Set(prev.map(e => e.timestamp + e.user));
-          const newEntries = cloudAccess.filter(e => !existing.has(e.timestamp + e.user));
-          const merged = [...newEntries, ...prev]
-            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-          localStorage.setItem("warehouseAccessLog", JSON.stringify(merged));
-          return merged;
-        });
-      }
-    } catch (err) {
-      console.warn("Sync from backend failed:", err);
-    }
-  };
 
   if (!isLoggedIn) {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-    <WarehouseTracker currentUser={currentUser} currentUserRole={currentUserRole} onLogout={handleLogout} callBackend={callBackend} syncFromBackend={syncFromBackend} />
+    <WarehouseTracker currentUser={currentUser} currentUserRole={currentUserRole} onLogout={handleLogout} />
 }
 
 // ============================================================
 // Main App Component (Protected)
 // ============================================================
 
-function WarehouseTracker({ currentUser, currentUserRole, onLogout, callBackend, syncFromBackend }) {
+function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const [view, setView] = useState("dashboard");
   
   // Load from localStorage or use initial data
