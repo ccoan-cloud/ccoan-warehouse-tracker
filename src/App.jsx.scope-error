@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // ============================================================
 // CONFIGURATION
 // ============================================================
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkHaRhLjr3WEaHZyBVkGdYLPDKo-DIbdGhtMXSP_Wb2AIdupN92mIUQndVzNJ9O6Wz/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxZnDmXx9vUlErhMSCHObn7Ptl3WCqH3JWPMfrlNxkTiFXNaIXU7Nr4hVhQFbc7ydt5/exec";
 const IS_DEMO = false;
 
 // Demo mode credentials for testing
@@ -2881,7 +2881,8 @@ const INITIAL_USERS = [
   { name: "Davide", role: "Group Leader", active: true },
   { name: "Orlando", role: "Maintenance", active: true },
   { name: "MOG George", role: "Department Leader", active: true },
-  { name: "MOG Giannis", role: "Department Leader", active: true }
+  { name: "MOG Giannis", role: "Department Leader", active: true },
+  { name: "MOG Harry", role: "Overseer", active: true },
   ];
 
 const now = () => new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -3262,6 +3263,27 @@ export default function WarehouseTrackerWithAuth() {
     setIsLoggedIn(false);
   };
 
+function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
+  const [view, setView] = useState("dashboard");
+  
+  // Load from localStorage or use initial data
+  const [inventory, setInventory] = useState(() => {
+    const saved = localStorage.getItem('warehouseInventory');
+    return saved ? JSON.parse(saved) : INITIAL_INVENTORY;
+  });
+  const [users, setUsers] = useState(() => {
+    const saved = localStorage.getItem('warehouseUsers');
+    return saved ? JSON.parse(saved) : INITIAL_USERS;
+  });
+  const [log, setLog] = useState(() => {
+    const saved = localStorage.getItem('warehouseLog');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [accessLog, setAccessLog] = useState(() => {
+    const saved = localStorage.getItem('warehouseAccessLog');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   // ── Backend helpers ──────────────────────────────────────────────────────
   // Fire-and-forget POST to Apps Script — never blocks the UI
   const callBackend = async (payload) => {
@@ -3361,34 +3383,12 @@ export default function WarehouseTrackerWithAuth() {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-    <WarehouseTracker currentUser={currentUser} currentUserRole={currentUserRole} onLogout={handleLogout} callBackend={callBackend} syncFromBackend={syncFromBackend} />
+  return <WarehouseTracker currentUser={currentUser} currentUserRole={currentUserRole} onLogout={handleLogout} />;
 }
 
 // ============================================================
 // Main App Component (Protected)
 // ============================================================
-
-function WarehouseTracker({ currentUser, currentUserRole, onLogout, callBackend, syncFromBackend }) {
-  const [view, setView] = useState("dashboard");
-  
-  // Load from localStorage or use initial data
-  const [inventory, setInventory] = useState(() => {
-    const saved = localStorage.getItem('warehouseInventory');
-    return saved ? JSON.parse(saved) : INITIAL_INVENTORY;
-  });
-  const [users, setUsers] = useState(() => {
-    const saved = localStorage.getItem('warehouseUsers');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
-  });
-  const [log, setLog] = useState(() => {
-    const saved = localStorage.getItem('warehouseLog');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [accessLog, setAccessLog] = useState(() => {
-    const saved = localStorage.getItem('warehouseAccessLog');
-    return saved ? JSON.parse(saved) : [];
-  });
-
   const [toast, setToast] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
