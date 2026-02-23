@@ -3441,6 +3441,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const streamRef = useRef(null);
   const checkoutStreamRef = useRef(null);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
   const barcodeIntervalRef = useRef(null);
   const checkoutBarcodeRef = useRef(null);
   // Refs to track active state inside async loops (avoids stale closure)
@@ -4002,10 +4003,20 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
       `}</style>
 
+      {/* Gallery picker — no capture attr so Android shows Photos/Files */}
       <input
         ref={fileInputRef}
         type="file"
         accept="image/jpeg,image/png,image/gif"
+        onChange={handlePhotoCapture}
+        style={{ display: "none" }}
+      />
+      {/* Camera input — capture forces direct camera open */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif"
+        capture="environment"
         onChange={handlePhotoCapture}
         style={{ display: "none" }}
       />
@@ -4464,9 +4475,22 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           {/* V4: Photo Capture Section */}
           <div style={{ marginBottom: 16 }}>
             <label style={S.lbl}>📸 Item Photo (Optional)</label>
-            <button onClick={triggerPhotoCapture} disabled={uploadingPhoto} style={{ ...S.pBtn, background: uploadingPhoto ? C.textDim : C.brandBright }}>
-              {uploadingPhoto ? "Uploading..." : "Take / Upload Photo"}
-            </button>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={uploadingPhoto}
+                style={{ ...S.pBtn, background: uploadingPhoto ? C.textDim : C.brandBright, flex: 1 }}
+              >
+                {uploadingPhoto ? "Uploading..." : "📷 Take Photo"}
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingPhoto}
+                style={{ ...S.pBtn, background: uploadingPhoto ? C.textDim : C.brand, flex: 1 }}
+              >
+                🖼 Choose from Gallery
+              </button>
+            </div>
             {photoPreview && (
               <div style={{ marginTop: 10 }}>
                 <img src={photoPreview} alt="Preview" style={S.photoPreview} />
@@ -4478,8 +4502,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               </p>
             )}
             <span style={S.hint}>
-              {IS_DEMO 
-                ? "Demo mode: Photo preview works, but not saved to Drive" 
+              {IS_DEMO
+                ? "Demo mode: Photo preview works, but not saved to Drive"
                 : "Photo will be uploaded to Google Drive and linked to this item"}
             </span>
           </div>
