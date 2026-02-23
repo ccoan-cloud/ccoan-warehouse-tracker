@@ -2967,9 +2967,9 @@ const INITIAL_USERS = [
   { name: "MOG Harry", role: "Overseer", active: true },
   ];
 
-const now = () => new Date().toISOString().slice(0, 19).replace("T", " ");
-const today = () => new Date().toISOString().slice(0, 10);
-
+const TZ = "Europe/Amsterdam";
+const now = () => { const d = new Date(); const date = d.toLocaleDateString("sv-SE", { timeZone: TZ }); const time = d.toLocaleTimeString("nl-NL", { timeZone: TZ, hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }); return `${date} ${time}`; };
+const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: TZ });
 // ============================================================
 // SEARCHABLE MULTI-SELECT COMPONENT
 // ============================================================
@@ -3358,6 +3358,7 @@ export default function WarehouseTrackerWithAuth() {
 // Main App Component (Protected)
 // ============================================================
 function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
+  const isAdmin = currentUserRole === "Warehouse Manager / Admin";
   const [view, setView] = useState("dashboard");
   
   // Load from localStorage or use initial data
@@ -4005,7 +4006,6 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         ref={fileInputRef}
         type="file"
         accept="image/jpeg,image/png,image/gif"
-        capture="environment"
         onChange={handlePhotoCapture}
         style={{ display: "none" }}
       />
@@ -4268,7 +4268,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {view === "inventory" && (<div>
           <div style={S.titleRow}>
             <h2 style={{ ...S.pageTitle, marginBottom: 0 }}>Inventory</h2>
-            <button onClick={() => setAddItemModal(true)} style={S.pBtn}>+ Add Item</button>
+            {isAdmin && <button onClick={() => setAddItemModal(true)} style={S.pBtn}>+ Add Item</button>}
           </div>
           <div style={S.filterBar}>
             <input type="text" placeholder="Search items..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.inp, maxWidth: 280, flex: 1 }}/>
@@ -4303,12 +4303,12 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}>{i.checkedOutBy || "—"}</td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">✏️</button>
+                    {isAdmin && <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">✏️</button>}
                     <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(i.photoUrl || ""); }} style={S.tiny} title="Photo">📷</button>
                     {i.type === "Consumable" && (
                       <button onClick={() => { setRestockModal(i.id); setRestockQty(1); }} style={{ ...S.tiny, color: C.green, borderColor: C.green }} title="Restock">+</button>
                     )}
-                    <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">✕</button>
+                    {isAdmin && <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">✕</button>}
                   </div>
                 </td>
               </tr>
@@ -4321,7 +4321,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {view === "users" && (<div>
           <div style={S.titleRow}>
             <h2 style={{ ...S.pageTitle, marginBottom: 0 }}>User Management</h2>
-            <button onClick={() => setAddUserModal(true)} style={S.pBtn}>+ Add User</button>
+            {isAdmin && <button onClick={() => setAddUserModal(true)} style={S.pBtn}>+ Add User</button>}
           </div>
           <div style={S.card}><div style={S.tw}><table style={S.tbl}><thead><tr>
             <th style={S.th}>Name</th><th style={S.th}>Role</th><th style={S.th}>Status</th><th style={S.th}>Actions</th>
@@ -4333,10 +4333,11 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}><span style={{ ...S.badge, background: u.active ? C.green : C.textDim }}>{u.active ? "Active" : "Inactive"}</span></td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <button onClick={() => setUsers(p => p.map(x => x.name === u.name ? { ...x, active: !x.active } : x))} style={S.smBtn}>
+                    {isAdmin && <button onClick={() => setUsers(p => p.map(x => x.name === u.name ? { ...x, active: !x.active } : x))} style={S.smBtn}>
                       {u.active ? "Deactivate" : "Activate"}
-                    </button>
-                    <button onClick={() => { setUsers(p => p.filter(x => x.name !== u.name)); flash(`${u.name} removed`); }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>
+                    </button>}
+                    {isAdmin && <button onClick={() => { setUsers(p => p.filter(x => x.name !== u.name)); flash(`${u.name} removed`); }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>}
+                    {!isAdmin && <span style={{ color: C.textDim, fontSize: 11, fontStyle: "italic" }}>View only</span>}
                   </div>
                 </td>
               </tr>
