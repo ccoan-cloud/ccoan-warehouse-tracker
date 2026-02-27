@@ -3,9 +3,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // ============================================================
 // CONFIGURATION
 // ============================================================
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkHaRhLjr3WEaHZyBVkGdYLPDKo-DIbdGhtMXSP_Wb2AIdupN92mIUQndVzNJ9O6Wz/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxNfnq1O1w686gX3Uapy-8fpnVijW9fXBApBb0yFwGscCwhKYajXjbyvgI-iJaS1ag/exec";
 const IS_DEMO = false;
-
 
 // ══════════════════════════════════════════════════════════════════════════
 // BACKEND SYNC - Simple functions at top level (no scope issues)
