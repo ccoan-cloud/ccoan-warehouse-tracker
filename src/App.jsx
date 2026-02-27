@@ -48,10 +48,16 @@ async function syncFromBackend(setInventory, setLog, setAccessLog) {
       } catch { return ts; }
     };
 
-    // Backend is the source of truth — replace local data entirely
+    // Backend is the source of truth — but preserve any local edits
+    // that haven't yet been persisted to the backend (e.g. photo URL edits)
     if (result.inventory?.length > 0) {
-      setInventory(result.inventory);
-      localStorage.setItem('warehouseInventory', JSON.stringify(result.inventory));
+      const pendingEdits = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+      const merged = result.inventory.map(item => {
+        const localEdit = pendingEdits[item.id];
+        return localEdit ? { ...item, ...localEdit } : item;
+      });
+      setInventory(merged);
+      localStorage.setItem('warehouseInventory', JSON.stringify(merged));
     }
 
     if (result.transactions?.length > 0) {
@@ -3404,6 +3410,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const [addItemModal, setAddItemModal] = useState(false);
   const [editItemModal, setEditItemModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [assetDetailItem, setAssetDetailItem] = useState(null);
   const [addUserModal, setAddUserModal] = useState(false);
   const [photoModal, setPhotoModal] = useState(null);
   const [scanModal, setScanModal] = useState(false);
@@ -3774,8 +3781,12 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const doAddItem = () => {
     if (!ni.id.trim() || !ni.item.trim()) return flash("ID and item name required", "error");
     if (inventory.find(i => i.id === ni.id.trim())) return flash("Item ID already exists", "error");
-    const newItem = { ...ni, id: ni.id.trim(), item: ni.item.trim(), status: "Available", checkedOutBy: null, checkedOutAt: null };
+    const newItem = { ...ni, id: ni.id.trim(), item: ni.item.trim(), status: "Available", checkedOutBy: null, checkedOutAt: null, createdAt: now() };
     setInventory(p => [...p, newItem]);
+    // Save to pending edits so createdAt survives sync
+    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    pending[newItem.id] = newItem;
+    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "added", itemId: ni.id.trim(), itemName: ni.item.trim(), qty: ni.qty, notes: `New item. Brand: ${ni.brand || "none"}. Model: ${ni.model || "none"}. Photo: ${ni.photoUrl || "none"}. Barcode: ${scannedBarcode || "none"}`, location: (ni.cabinet || ni.shelf) ? `${ni.cabinet}-${ni.shelf}` : "No location" }, ...p]);
     // ✅ Sync to Google Sheets so all devices see the new item
     callBackend({ action: "addItem", item: newItem });
@@ -3793,10 +3804,15 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     if (!editItem.id.trim() || !editItem.item.trim()) return flash("ID and item name required", "error");
     const conflict = inventory.find(i => i.id === editItem.id.trim() && i.id !== editItem._originalId);
     if (conflict) return flash("Another item already uses this ID", "error");
-    const updatedItem = { ...editItem, id: editItem.id.trim(), item: editItem.item.trim(), type: detectType(editItem.category) };
+    const updatedItem = { ...editItem, id: editItem.id.trim(), item: editItem.item.trim(), type: detectType(editItem.category), updatedAt: now() };
     delete updatedItem._originalId;
     setInventory(p => p.map(i => i.id === editItem._originalId ? updatedItem : i));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "edited", itemId: updatedItem.id, itemName: updatedItem.item, qty: updatedItem.qty, notes: `Item updated`, location: "" }, ...p]);
+    // Save edit locally so it survives backend sync overwrites
+    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    pending[updatedItem.id] = updatedItem;
+    if (editItem._originalId !== updatedItem.id) delete pending[editItem._originalId];
+    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
     callBackend({ action: "updateItem", item: updatedItem });
     flash(`${updatedItem.item} updated`);
     setEditItemModal(false);
@@ -3807,7 +3823,10 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     const it = inventory.find(i => i.id === id);
     setInventory(p => p.filter(i => i.id !== id));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "deleted", itemId: id, itemName: it?.item || id, qty: 0, notes: "Removed", location: "" }, ...p]);
-    // ✅ Sync to Google Sheets
+    // Clear from pending edits
+    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    delete pending[id];
+    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
     callBackend({ action: "deleteItem", itemId: id });
     flash(`${it?.item || id} removed`);
     setConfirmDel(null);
@@ -3819,7 +3838,6 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     if (users.find(u => u.name.toLowerCase() === nu.name.trim().toLowerCase())) return flash("User exists", "error");
     setUsers(p => [...p, { name: nu.name.trim(), role: nu.role, pin: nu.pin, active: true }]);
     // ✅ Sync to Google Sheets so the new user can log in from any device
-    callBackend({ action: "addUser", userName: nu.name.trim(), role: nu.role, pin: nu.pin });
     callBackend({ action: "addUser", userName: nu.name.trim(), role: nu.role, pin: nu.pin });
     flash(`${nu.name.trim()} added`);
     setNu({ name: "", role: "Maintenance", pin: "" });
@@ -4292,26 +4310,27 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             </div>
           </div>
           <div style={S.tw}><table style={S.tbl}><thead><tr>
-            <th style={S.th}>Code</th><th style={S.th}>Item</th><th style={S.th}>Brand</th><th style={S.th}>Model</th><th style={S.th}>Category</th>
-            <th style={S.th}>Cabinet / Shelf</th>
-            <th style={S.th}>Qty</th><th style={S.th}>Status</th><th style={S.th}>Photo</th><th style={S.th}>Held By</th><th style={S.th}>Actions</th>
+            <th style={S.th}>Code</th><th style={S.th}>Description</th><th style={S.th}>Brand</th>
+            <th style={S.th}>Status</th><th style={S.th}>Model</th><th style={S.th}>Category</th>
+            <th style={S.th}>Date Created</th><th style={S.th}>Qty</th><th style={S.th}>Photo</th><th style={S.th}>Actions</th>
           </tr></thead><tbody>
             {filteredInv.map(i => (
               <tr key={i.id} style={i.status === "Checked Out" ? { background: C.redDim } : i.qty === 0 ? { background: C.orangeDim } : {}}>
-                <td style={S.td}><code style={S.code}>{i.id}</code></td>
-                <td style={{ ...S.td, fontWeight: 500 }}>{i.item}</td>
+                <td style={S.td}>
+                  <button onClick={() => setAssetDetailItem(i)} style={{ ...S.lnkBtn, fontFamily: "monospace", fontWeight: 700, fontSize: 11, background: C.accentDim, padding: "2px 7px", borderRadius: 3, textDecoration: "none" }}>{i.id}</button>
+                </td>
+                <td style={{ ...S.td, fontWeight: 500, maxWidth: 220, whiteSpace: "normal", lineHeight: 1.3 }}>{i.item}</td>
                 <td style={S.td}>{i.brand || "—"}</td>
+                <td style={S.td}><SBadge status={i.status} qty={i.qty}/></td>
                 <td style={S.td}>{i.model || "—"}</td>
                 <td style={S.td}>{i.category}</td>
-                <td style={S.td}>{i.cabinet && i.shelf ? `${i.cabinet} / ${i.shelf}` : i.cabinet || i.shelf || "—"}</td>
+                <td style={{ ...S.td, fontSize: 11, color: C.textMuted }}>{i.createdAt ? i.createdAt.slice(0, 10) : "—"}</td>
                 <td style={S.td}>{i.qty}</td>
-                <td style={S.td}><SBadge status={i.status} qty={i.qty}/></td>
                 <td style={S.td}>
                   {i.photoUrl
                     ? <a href={i.photoUrl} target="_blank" rel="noopener noreferrer" style={S.photoLnk}>📸 View</a>
                     : <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(""); }} style={S.lnkBtn}>+ Photo</button>}
                 </td>
-                <td style={S.td}>{i.checkedOutBy || "—"}</td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                     {isAdmin && <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">✏️</button>}
@@ -4421,7 +4440,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               <input type="text" value={ni.id} onChange={e => setNi({ ...ni, id: e.target.value })} placeholder="e.g. 999999930 (or scan barcode)" style={S.inp}/>
               <span style={S.hint}>Asset Tag ID or barcode {scannedBarcode && "(Auto-filled from barcode)"}</span>
             </div>
-            <div style={S.f}><label style={S.lbl}>Item Name *</label>
+            <div style={S.f}><label style={S.lbl}>Description *</label>
               <input type="text" value={ni.item} onChange={e => setNi({ ...ni, item: e.target.value })} placeholder="e.g. Cordless drill/driver" style={S.inp}/>
             </div>
           </div>
@@ -4521,7 +4540,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <input type="text" value={editItem.id} onChange={e => setEditItem({ ...editItem, id: e.target.value })} style={S.inp}/>
                 <span style={S.hint}>Changing the ID will update it everywhere</span>
               </div>
-              <div style={S.f}><label style={S.lbl}>Item Name *</label>
+              <div style={S.f}><label style={S.lbl}>Description *</label>
                 <input type="text" value={editItem.item} onChange={e => setEditItem({ ...editItem, item: e.target.value })} style={S.inp}/>
               </div>
             </div>
@@ -4575,6 +4594,61 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           </div>
         )}
       </Modal>
+
+
+      {/* ── Asset Detail Popup (Code hyperlink click) ── */}
+      {assetDetailItem && (
+        <div style={S.overlay} onClick={() => setAssetDetailItem(null)}>
+          <div style={{ ...S.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <h3 style={{ ...S.modalTitle, fontSize: 13, color: C.textMuted, fontFamily: "monospace" }}>{assetDetailItem.id}</h3>
+              <button onClick={() => setAssetDetailItem(null)} style={S.modalX}>✕</button>
+            </div>
+            <div style={S.modalBody}>
+              <p style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 14, marginTop: 0 }}>{assetDetailItem.item}</p>
+              <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+                {assetDetailItem.photoUrl ? (
+                  <img src={assetDetailItem.photoUrl} alt={assetDetailItem.item}
+                    style={{ width: 130, height: 130, objectFit: "cover", borderRadius: 8, border: `2px solid ${C.borderLight}`, flexShrink: 0 }}
+                    onError={e => { e.target.style.display = "none"; }}
+                  />
+                ) : (
+                  <div style={{ width: 130, height: 130, borderRadius: 8, border: `2px dashed ${C.borderLight}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 11, flexShrink: 0 }}>
+                    No Photo
+                  </div>
+                )}
+                <table style={{ fontSize: 12, width: "100%", borderCollapse: "collapse" }}>
+                  {[
+                    ["Brand", assetDetailItem.brand],
+                    ["Model", assetDetailItem.model],
+                    ["Category", assetDetailItem.category],
+                    ["Type", assetDetailItem.type],
+                    ["Status", <SBadge status={assetDetailItem.status} qty={assetDetailItem.qty}/>],
+                    ["Qty", assetDetailItem.qty],
+                    ["Cabinet", assetDetailItem.cabinet],
+                    ["Shelf", assetDetailItem.shelf],
+                    ["Held By", assetDetailItem.checkedOutBy],
+                    ["Serial No", assetDetailItem.serialNo],
+                    ["Date Created", assetDetailItem.createdAt ? assetDetailItem.createdAt.slice(0, 10) : "—"],
+                  ].map(([label, value]) => (
+                    <tr key={label} style={{ borderBottom: `1px solid ${C.border}18` }}>
+                      <td style={{ padding: "5px 8px 5px 0", color: C.textMuted, fontWeight: 600, whiteSpace: "nowrap", verticalAlign: "top" }}>{label}</td>
+                      <td style={{ padding: "5px 0", color: C.text }}>{value || "—"}</td>
+                    </tr>
+                  ))}
+                </table>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                {isAdmin && (
+                  <button onClick={() => { setEditItem({ ...assetDetailItem, _originalId: assetDetailItem.id }); setEditItemModal(true); setAssetDetailItem(null); }}
+                    style={{ ...S.pBtn, flex: 1 }}>✏️ Edit Asset</button>
+                )}
+                <button onClick={() => setAssetDetailItem(null)} style={{ ...S.smBtn, flex: 1, textAlign: "center" }}>Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Modal open={addUserModal} onClose={() => setAddUserModal(false)} title="Add New User">
         <div style={S.mf}>
