@@ -2967,6 +2967,7 @@ const INITIAL_USERS = [
   { name: "Nikos", role: "Group Leader", active: true },
   { name: "Davide", role: "Group Leader", active: true },
   { name: "Orlando", role: "Maintenance", active: true },
+  { name: "Sergei", role: "Maintenance", active: true },
   { name: "MOG George", role: "Department Leader", active: true },
   { name: "MOG Giannis", role: "Department Leader", active: true },
   { name: "MOG Harry", role: "Overseer", active: true },
