@@ -3194,23 +3194,20 @@ export default function WarehouseTrackerWithAuth() {
   const [currentUserRole, setCurrentUserRole] = useState("");
 
   useEffect(() => {
+    const expiry = localStorage.getItem("warehouseSessionExpiry");
+    if (expiry && Date.now() > parseInt(expiry)) {
+      // Session expired (7 days), clear everything
+      localStorage.removeItem("warehouseUser");
+      localStorage.removeItem("warehouseUserRole");
+      localStorage.removeItem("warehouseSessionExpiry");
+      return;
+    }
     const savedUser = localStorage.getItem("warehouseUser");
     const savedRole = localStorage.getItem("warehouseUserRole");
-    const savedExpiry = localStorage.getItem("warehouseExpiry");
-    
-    if (savedUser && savedExpiry) {
-      const expiryTime = parseInt(savedExpiry, 10);
-      if (Date.now() < expiryTime) {
-        // Session still valid
-        setCurrentUser(savedUser);
-        setCurrentUserRole(savedRole || "");
-        setIsLoggedIn(true);
-      } else {
-        // Session expired - clear it
-        localStorage.removeItem("warehouseUser");
-        localStorage.removeItem("warehouseUserRole");
-        localStorage.removeItem("warehouseExpiry");
-      }
+    if (savedUser) {
+      setCurrentUser(savedUser);
+      setCurrentUserRole(savedRole || "");
+      setIsLoggedIn(true);
     }
   }, []);
 
@@ -3221,10 +3218,10 @@ export default function WarehouseTrackerWithAuth() {
         const user = INITIAL_USERS.find(u => u.name === userName);
         const role = user ? user.role : "";
         
-        const expiryTime = Date.now() + 604800000;
+        const sevenDays = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
         localStorage.setItem("warehouseUser", userName);
         localStorage.setItem("warehouseUserRole", role);
-        localStorage.setItem("warehouseExpiry", expiryTime.toString());
+        localStorage.setItem("warehouseSessionExpiry", (Date.now() + sevenDays).toString());
         setCurrentUser(userName);
         setCurrentUserRole(role);
         setIsLoggedIn(true);
@@ -3250,10 +3247,8 @@ export default function WarehouseTrackerWithAuth() {
         const result = JSON.parse(text);
         
         if (result.success) {
-          const expiryTime = Date.now() + 604800000;
-          localStorage.setItem("warehouseUser", userName);
-          localStorage.setItem("warehouseUserRole", result.role || "");
-          localStorage.setItem("warehouseExpiry", expiryTime.toString());
+          sessionStorage.setItem("warehouseUser", userName);
+          sessionStorage.setItem("warehouseUserRole", result.role || "");
           setCurrentUser(userName);
           setCurrentUserRole(result.role || "");
           setIsLoggedIn(true);
@@ -3273,7 +3268,7 @@ export default function WarehouseTrackerWithAuth() {
   const handleLogout = () => {
     localStorage.removeItem("warehouseUser");
     localStorage.removeItem("warehouseUserRole");
-    localStorage.removeItem("warehouseExpiry");
+    localStorage.removeItem("warehouseSessionExpiry");
     setCurrentUser("");
     setCurrentUserRole("");
     setIsLoggedIn(false);
@@ -3386,7 +3381,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   // Forms - auto-fill with current user
   const [formUser, setFormUser] = useState(currentUser);
-  const [onBehalfOfUser, setOnBehalfOfUser] = useState(""); // Admin can act on behalf
+  const [onBehalfOfUser, setOnBehalfOfUser] = useState(""); // Admin can act on behalf of others
   const [formItems, setFormItems] = useState([]); // Multi-select
   const [formAction, setFormAction] = useState("checkout");
   const [formNotes, setFormNotes] = useState("");
@@ -4107,7 +4102,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                   </label>
                 </div>
               </div>
-
+            </div>
+            
             {/* Admin: Act on Behalf Of */}
             {(currentUserRole === "Admin" || currentUserRole === "Warehouse Manager") && (
               <div style={{ marginTop: 16, marginBottom: 16 }}>
@@ -4132,7 +4128,6 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                     setFormItems([]); // Clear selections when switching users
                   }}
                   placeholder="-- Select user (optional) --"
-                  style={{ background: onBehalfOfUser ? "rgba(255,193,7,0.1)" : C.surface, border: onBehalfOfUser ? "2px solid #ffc107" : `1px solid ${C.border}` }}
                 />
                 {onBehalfOfUser && (
                   <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(255,193,7,0.15)", borderRadius: 6, border: "1px solid #ffc107", fontSize: 13, color: C.text }}>
@@ -4142,7 +4137,6 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 )}
               </div>
             )}
-            </div>
             
             <div style={S.f}>
               <label style={S.lbl}>Select Item(s) * (can select multiple)</label>
