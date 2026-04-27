@@ -3282,8 +3282,16 @@ export default function WarehouseTrackerWithAuth() {
   const [currentUserRole, setCurrentUserRole] = useState("");
 
   useEffect(() => {
-    const savedUser = sessionStorage.getItem("warehouseUser");
-    const savedRole = sessionStorage.getItem("warehouseUserRole");
+    const expiry = localStorage.getItem("warehouseSessionExpiry");
+    if (expiry && Date.now() > parseInt(expiry)) {
+      // Session expired (7 days), clear everything
+      localStorage.removeItem("warehouseUser");
+      localStorage.removeItem("warehouseUserRole");
+      localStorage.removeItem("warehouseSessionExpiry");
+      return;
+    }
+    const savedUser = localStorage.getItem("warehouseUser");
+    const savedRole = localStorage.getItem("warehouseUserRole");
     if (savedUser) {
       setCurrentUser(savedUser);
       setCurrentUserRole(savedRole || "");
@@ -3298,8 +3306,10 @@ export default function WarehouseTrackerWithAuth() {
         const user = INITIAL_USERS.find(u => u.name === userName);
         const role = user ? user.role : "";
         
-        sessionStorage.setItem("warehouseUser", userName);
-        sessionStorage.setItem("warehouseUserRole", role);
+        const sevenDays = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+        localStorage.setItem("warehouseUser", userName);
+        localStorage.setItem("warehouseUserRole", role);
+        localStorage.setItem("warehouseSessionExpiry", (Date.now() + sevenDays).toString());
         setCurrentUser(userName);
         setCurrentUserRole(role);
         setIsLoggedIn(true);
@@ -3345,8 +3355,9 @@ export default function WarehouseTrackerWithAuth() {
   };
 
   const handleLogout = () => {
-    sessionStorage.removeItem("warehouseUser");
-    sessionStorage.removeItem("warehouseUserRole");
+    localStorage.removeItem("warehouseUser");
+    localStorage.removeItem("warehouseUserRole");
+    localStorage.removeItem("warehouseSessionExpiry");
     setCurrentUser("");
     setCurrentUserRole("");
     setIsLoggedIn(false);
