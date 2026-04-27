@@ -1,3 +1,19 @@
+# HOW TO SYNC AFTER PUSHING UPDATES ON WAREHOUSE TRACKER
+
+cp ~/Downloads/App-DUPFIX.jsx src/App.jsx
+
+npm run build
+
+npx gh-pages -d dist -f
+
+git add .
+
+git commit -m "Fixed gallery missing, made time CET and restricted user access"
+
+git push origin main
+
+
+
 # React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

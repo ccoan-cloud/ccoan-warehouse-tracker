@@ -3,8 +3,95 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // ============================================================
 // CONFIGURATION
 // ============================================================
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkHaRhLjr3WEaHZyBVkGdYLPDKo-DIbdGhtMXSP_Wb2AIdupN92mIUQndVzNJ9O6Wz/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxNfnq1O1w686gX3Uapy-8fpnVijW9fXBApBb0yFwGscCwhKYajXjbyvgI-iJaS1ag/exec";
 const IS_DEMO = false;
+
+// ══════════════════════════════════════════════════════════════════════════
+// BACKEND SYNC - Simple functions at top level (no scope issues)
+// ══════════════════════════════════════════════════════════════════════════
+
+async function callBackend(payload) {
+  if (IS_DEMO) return;
+  try {
+    const res = await fetch(APPS_SCRIPT_URL, { method: "POST", redirect: "follow", body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const result = JSON.parse(await res.text());
+    if (!result.success) console.error("Backend error:", result.message);
+  } catch (err) {
+    console.error("Sync failed:", err.message);
+  }
+}
+
+async function syncFromBackend(setInventory, setLog, setAccessLog) {
+  if (IS_DEMO) return;
+  try {
+    const res = await fetch(APPS_SCRIPT_URL, { method: "POST", redirect: "follow", body: JSON.stringify({ action: "getAll" }) });
+    const result = JSON.parse(await res.text());
+    if (!result.success) return;
+
+    // Helper to derive a readable date from a timestamp string
+    const deriveDate = (ts) => {
+      if (!ts) return "";
+      try {
+        return new Date(ts).toISOString().slice(0, 10);
+      } catch { return ts.slice(0, 10) || ""; }
+    };
+
+    // Helper to format timestamp for display (strip trailing Z/ms if ISO)
+    const formatTs = (ts) => {
+      if (!ts) return "";
+      // Already a readable format like "2026-02-20 14:21:45"? Return as-is
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(ts)) return ts;
+      try {
+        return new Date(ts).toISOString().slice(0, 19).replace("T", " ");
+      } catch { return ts; }
+    };
+
+    // Backend is the source of truth — but preserve any local edits
+    // that haven't yet been persisted to the backend (e.g. photo URL edits)
+    if (result.inventory?.length > 0) {
+      const pendingEdits = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+      const merged = result.inventory.map(item => {
+        const localEdit = pendingEdits[item.id];
+        return localEdit ? { ...item, ...localEdit } : item;
+      });
+      setInventory(merged);
+      localStorage.setItem('warehouseInventory', JSON.stringify(merged));
+    }
+
+    if (result.transactions?.length > 0) {
+      const trans = result.transactions.map(t => ({
+        timestamp: formatTs(t.Timestamp || t.timestamp || ""),
+        user: t.UserName || t.user || "",
+        action: t.Action || t.action || "",
+        itemId: t.ItemID || t.itemId || "",
+        itemName: t.ItemName || t.itemName || "",
+        qty: t.Quantity || t.qty || 1,
+        notes: t.Notes || t.notes || "",
+        location: t.location || ""
+      })).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      setLog(trans);
+      localStorage.setItem('warehouseLog', JSON.stringify(trans));
+    }
+
+    if (result.accessLog?.length > 0) {
+      const access = result.accessLog.map(a => {
+        const ts = formatTs(a.Timestamp || a.timestamp || "");
+        return {
+          timestamp: ts,
+          date: deriveDate(a.Timestamp || a.timestamp || ""),
+          user: a.UserName || a.user || "",
+          purpose: a.Reason || a.reason || a.Purpose || a.purpose || ""
+        };
+      }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      setAccessLog(access);
+      localStorage.setItem('warehouseAccessLog', JSON.stringify(access));
+    }
+  } catch (err) {
+    console.error("Sync error:", err.message);
+  }
+}
+
 
 // Demo mode credentials for testing
 const DEMO_CREDENTIALS = {
@@ -2880,14 +2967,15 @@ const INITIAL_USERS = [
   { name: "Nikos", role: "Group Leader", active: true },
   { name: "Davide", role: "Group Leader", active: true },
   { name: "Orlando", role: "Maintenance", active: true },
+  { name: "Sergei", role: "Maintenance", active: true },
   { name: "MOG George", role: "Department Leader", active: true },
   { name: "MOG Giannis", role: "Department Leader", active: true },
   { name: "MOG Harry", role: "Overseer", active: true },
   ];
 
-const now = () => new Date().toISOString().slice(0, 19).replace("T", " ");
-const today = () => new Date().toISOString().slice(0, 10);
-
+const TZ = "Europe/Amsterdam";
+const now = () => { const d = new Date(); const date = d.toLocaleDateString("sv-SE", { timeZone: TZ }); const time = d.toLocaleTimeString("nl-NL", { timeZone: TZ, hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }); return `${date} ${time}`; };
+const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: TZ });
 // ============================================================
 // SEARCHABLE MULTI-SELECT COMPONENT
 // ============================================================
@@ -3194,23 +3282,12 @@ export default function WarehouseTrackerWithAuth() {
   const [currentUserRole, setCurrentUserRole] = useState("");
 
   useEffect(() => {
-    const savedUser = localStorage.getItem("warehouseUser");
-    const savedRole = localStorage.getItem("warehouseUserRole");
-    const savedExpiry = localStorage.getItem("warehouseExpiry");
-    
-    if (savedUser && savedExpiry) {
-      const expiryTime = parseInt(savedExpiry, 10);
-      if (Date.now() < expiryTime) {
-        // Session still valid
-        setCurrentUser(savedUser);
-        setCurrentUserRole(savedRole || "");
-        setIsLoggedIn(true);
-      } else {
-        // Session expired - clear it
-        localStorage.removeItem("warehouseUser");
-        localStorage.removeItem("warehouseUserRole");
-        localStorage.removeItem("warehouseExpiry");
-      }
+    const savedUser = sessionStorage.getItem("warehouseUser");
+    const savedRole = sessionStorage.getItem("warehouseUserRole");
+    if (savedUser) {
+      setCurrentUser(savedUser);
+      setCurrentUserRole(savedRole || "");
+      setIsLoggedIn(true);
     }
   }, []);
 
@@ -3221,13 +3298,12 @@ export default function WarehouseTrackerWithAuth() {
         const user = INITIAL_USERS.find(u => u.name === userName);
         const role = user ? user.role : "";
         
-        const expiryTime = Date.now() + 604800000;
-        localStorage.setItem("warehouseUser", userName);
-        localStorage.setItem("warehouseUserRole", role);
-        localStorage.setItem("warehouseExpiry", expiryTime.toString());
+        sessionStorage.setItem("warehouseUser", userName);
+        sessionStorage.setItem("warehouseUserRole", role);
         setCurrentUser(userName);
         setCurrentUserRole(role);
         setIsLoggedIn(true);
+          syncFromBackend(setInventory, setLog, setAccessLog);
         return { success: true };
       } else {
         return { success: false, message: "Invalid name or PIN" };
@@ -3250,10 +3326,8 @@ export default function WarehouseTrackerWithAuth() {
         const result = JSON.parse(text);
         
         if (result.success) {
-          const expiryTime = Date.now() + 604800000;
-          localStorage.setItem("warehouseUser", userName);
-          localStorage.setItem("warehouseUserRole", result.role || "");
-          localStorage.setItem("warehouseExpiry", expiryTime.toString());
+          sessionStorage.setItem("warehouseUser", userName);
+          sessionStorage.setItem("warehouseUserRole", result.role || "");
           setCurrentUser(userName);
           setCurrentUserRole(result.role || "");
           setIsLoggedIn(true);
@@ -3271,85 +3345,13 @@ export default function WarehouseTrackerWithAuth() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("warehouseUser");
-    localStorage.removeItem("warehouseUserRole");
-    localStorage.removeItem("warehouseExpiry");
+    sessionStorage.removeItem("warehouseUser");
+    sessionStorage.removeItem("warehouseUserRole");
     setCurrentUser("");
     setCurrentUserRole("");
     setIsLoggedIn(false);
   };
 
-  // ── Backend helpers ──────────────────────────────────────────────────────
-  // Fire-and-forget POST to Apps Script — never blocks the UI
-  const callBackend = (payload) => {
-    if (IS_DEMO) return;
-    fetch(APPS_SCRIPT_URL, { method: "POST", redirect: "follow", body: JSON.stringify(payload) })
-      .catch(err => console.warn("Backend sync failed:", err));
-  };
-
-  // Pull the full TransactionLog + Inventory from Google Sheets after login
-  // Merges cloud data so every device sees everyone's activity
-  const syncFromBackend = async () => {
-    if (IS_DEMO) return;
-    try {
-      const res = await fetch(APPS_SCRIPT_URL, {
-        method: "POST",
-        redirect: "follow",
-        body: JSON.stringify({ action: "getAll" }),
-      });
-      const text = await res.text();
-      const result = JSON.parse(text);
-      if (!result.success) return;
-
-      // Merge inventory from Sheets (authoritative) into state
-      if (result.inventory && result.inventory.length > 0) {
-        setInventory(result.inventory);
-        localStorage.setItem("warehouseInventory", JSON.stringify(result.inventory));
-      }
-
-      // Merge transaction log — combine cloud + local, deduplicate by timestamp+itemId
-      if (result.transactions && result.transactions.length > 0) {
-        const cloudLog = result.transactions.map(t => ({
-          timestamp: t.Timestamp || t.timestamp || "",
-          user:      t.UserName  || t.user      || "",
-          action:    t.Action    || t.action    || "",
-          itemId:    t.ItemID    || t.itemId    || "",
-          itemName:  t.ItemName  || t.itemName  || "",
-          qty:       t.Quantity  || t.qty       || 1,
-          notes:     t.Notes     || t.notes     || "",
-          location:  t.location  || "",
-        }));
-
-        setLog(prev => {
-          const existing = new Set(prev.map(e => e.timestamp + e.itemId + e.action));
-          const newEntries = cloudLog.filter(e => !existing.has(e.timestamp + e.itemId + e.action));
-          const merged = [...newEntries, ...prev]
-            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-          localStorage.setItem("warehouseLog", JSON.stringify(merged));
-          return merged;
-        });
-      }
-
-      // Merge access log
-      if (result.accessLog && result.accessLog.length > 0) {
-        const cloudAccess = result.accessLog.map(a => ({
-          timestamp: a.Timestamp || a.timestamp || "",
-          user:      a.UserName  || a.user      || "",
-          reason:    a.Reason    || a.reason    || "",
-        }));
-        setAccessLog(prev => {
-          const existing = new Set(prev.map(e => e.timestamp + e.user));
-          const newEntries = cloudAccess.filter(e => !existing.has(e.timestamp + e.user));
-          const merged = [...newEntries, ...prev]
-            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-          localStorage.setItem("warehouseAccessLog", JSON.stringify(merged));
-          return merged;
-        });
-      }
-    } catch (err) {
-      console.warn("Sync from backend failed:", err);
-    }
-  };
 
   if (!isLoggedIn) {
     return <LoginScreen onLogin={handleLogin} />;
@@ -3362,6 +3364,7 @@ export default function WarehouseTrackerWithAuth() {
 // Main App Component (Protected)
 // ============================================================
 function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
+  const isAdmin = currentUserRole === "Warehouse Manager / Admin";
   const [view, setView] = useState("dashboard");
   
   // Load from localStorage or use initial data
@@ -3386,7 +3389,6 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   // Forms - auto-fill with current user
   const [formUser, setFormUser] = useState(currentUser);
-  const [onBehalfOfUser, setOnBehalfOfUser] = useState(""); // Admin can act on behalf
   const [formItems, setFormItems] = useState([]); // Multi-select
   const [formAction, setFormAction] = useState("checkout");
   const [formNotes, setFormNotes] = useState("");
@@ -3406,6 +3408,9 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   // Modals
   const [addItemModal, setAddItemModal] = useState(false);
+  const [editItemModal, setEditItemModal] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [assetDetailItem, setAssetDetailItem] = useState(null);
   const [addUserModal, setAddUserModal] = useState(false);
   const [photoModal, setPhotoModal] = useState(null);
   const [scanModal, setScanModal] = useState(false);
@@ -3443,6 +3448,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const streamRef = useRef(null);
   const checkoutStreamRef = useRef(null);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
   const barcodeIntervalRef = useRef(null);
   const checkoutBarcodeRef = useRef(null);
   // Refs to track active state inside async loops (avoids stale closure)
@@ -3477,6 +3483,17 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   useEffect(() => {
     localStorage.setItem('warehouseAccessLog', JSON.stringify(accessLog));
   }, [accessLog]);
+
+  // ── Auto-sync from backend every 60 seconds ──────────────────────────────
+  useEffect(() => {
+    if (IS_DEMO) return;
+    // Initial sync on mount
+    syncFromBackend(setInventory, setLog, setAccessLog);
+    const interval = setInterval(() => {
+      syncFromBackend(setInventory, setLog, setAccessLog);
+    }, 60000); // 60 seconds
+    return () => clearInterval(interval);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeUsers = users.filter(u => u.active);
 
@@ -3665,33 +3682,25 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           errorMessages.push(`${it.item} already checked out`);
           return;
         }
-        const actualUser = onBehalfOfUser || formUser.trim();
-        const logNotes = onBehalfOfUser 
-          ? `${formNotes.trim()} [by ${currentUser} on behalf of ${onBehalfOfUser}]`.trim()
-          : formNotes.trim();
         setInventory(p => p.map(i => 
           i.id === itemId 
-            ? { ...i, status: "Checked Out", checkedOutBy: actualUser, checkedOutAt: now() }
+            ? { ...i, status: "Checked Out", checkedOutBy: formUser.trim(), checkedOutAt: now() }
             : i
         ));
         setLog(p => [{ 
           timestamp: now(), 
-          user: actualUser, 
+          user: formUser.trim(), 
           action: "checkout", 
           itemId: it.id, 
           itemName: it.item, 
           qty: 1, 
-          notes: logNotes, 
+          notes: formNotes.trim(), 
           location: `${it.cabinet}-${it.shelf}` 
         }, ...p]);
         // Sync to Google Sheets so all devices see this
-        callBackend({ action: "checkOut", itemId: it.id, userName: actualUser, notes: logNotes });
+        callBackend({ action: "checkOut", itemId: it.id, userName: formUser.trim(), notes: formNotes.trim() });
         successCount++;
       } else if (formAction === "return") {
-        const actualUser = onBehalfOfUser || formUser.trim();
-        const logNotes = onBehalfOfUser 
-          ? `${formNotes.trim()} [by ${currentUser} on behalf of ${onBehalfOfUser}]`.trim()
-          : formNotes.trim();
         setInventory(p => p.map(i => 
           i.id === itemId 
             ? { ...i, status: "Available", checkedOutBy: null, checkedOutAt: null }
@@ -3699,16 +3708,16 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         ));
         setLog(p => [{ 
           timestamp: now(), 
-          user: actualUser, 
+          user: formUser.trim(), 
           action: "return", 
           itemId: it.id, 
           itemName: it.item, 
           qty: 1, 
-          notes: logNotes, 
+          notes: formNotes.trim(), 
           location: `${it.cabinet}-${it.shelf}` 
         }, ...p]);
         // Sync to Google Sheets so all devices see this
-        callBackend({ action: "returnItem", itemId: it.id, userName: actualUser });
+        callBackend({ action: "returnItem", itemId: it.id, userName: formUser.trim() });
         successCount++;
       }
     });
@@ -3772,8 +3781,12 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const doAddItem = () => {
     if (!ni.id.trim() || !ni.item.trim()) return flash("ID and item name required", "error");
     if (inventory.find(i => i.id === ni.id.trim())) return flash("Item ID already exists", "error");
-    const newItem = { ...ni, id: ni.id.trim(), item: ni.item.trim(), status: "Available", checkedOutBy: null, checkedOutAt: null };
+    const newItem = { ...ni, id: ni.id.trim(), item: ni.item.trim(), status: "Available", checkedOutBy: null, checkedOutAt: null, createdAt: now() };
     setInventory(p => [...p, newItem]);
+    // Save to pending edits so createdAt survives sync
+    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    pending[newItem.id] = newItem;
+    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "added", itemId: ni.id.trim(), itemName: ni.item.trim(), qty: ni.qty, notes: `New item. Brand: ${ni.brand || "none"}. Model: ${ni.model || "none"}. Photo: ${ni.photoUrl || "none"}. Barcode: ${scannedBarcode || "none"}`, location: (ni.cabinet || ni.shelf) ? `${ni.cabinet}-${ni.shelf}` : "No location" }, ...p]);
     // ✅ Sync to Google Sheets so all devices see the new item
     callBackend({ action: "addItem", item: newItem });
@@ -3786,11 +3799,34 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     setAddItemModal(false);
   };
 
+  const doEditItem = () => {
+    if (!editItem) return;
+    if (!editItem.id.trim() || !editItem.item.trim()) return flash("ID and item name required", "error");
+    const conflict = inventory.find(i => i.id === editItem.id.trim() && i.id !== editItem._originalId);
+    if (conflict) return flash("Another item already uses this ID", "error");
+    const updatedItem = { ...editItem, id: editItem.id.trim(), item: editItem.item.trim(), type: detectType(editItem.category), updatedAt: now() };
+    delete updatedItem._originalId;
+    setInventory(p => p.map(i => i.id === editItem._originalId ? updatedItem : i));
+    setLog(p => [{ timestamp: now(), user: currentUser, action: "edited", itemId: updatedItem.id, itemName: updatedItem.item, qty: updatedItem.qty, notes: `Item updated`, location: "" }, ...p]);
+    // Save edit locally so it survives backend sync overwrites
+    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    pending[updatedItem.id] = updatedItem;
+    if (editItem._originalId !== updatedItem.id) delete pending[editItem._originalId];
+    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
+    callBackend({ action: "updateItem", item: updatedItem });
+    flash(`${updatedItem.item} updated`);
+    setEditItemModal(false);
+    setEditItem(null);
+  };
+
   const doDeleteItem = (id) => {
     const it = inventory.find(i => i.id === id);
     setInventory(p => p.filter(i => i.id !== id));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "deleted", itemId: id, itemName: it?.item || id, qty: 0, notes: "Removed", location: "" }, ...p]);
-    // ✅ Sync to Google Sheets
+    // Clear from pending edits
+    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    delete pending[id];
+    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
     callBackend({ action: "deleteItem", itemId: id });
     flash(`${it?.item || id} removed`);
     setConfirmDel(null);
@@ -3834,6 +3870,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       notes: `Added ${restockQty} units`, 
       location: `${item.cabinet}-${item.shelf}` 
     }, ...p]);
+    callBackend({ action: "restockItem", itemId: restockModal, qty: restockQty, userName: currentUser });
     callBackend({ action: "restockItem", itemId: restockModal, qty: restockQty, userName: currentUser });
     flash(`${item.item} restocked: +${restockQty} units`);
     setRestockQty(1);
@@ -3939,7 +3976,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   // Prepare options for multi-select
   const toolOptions = inventory
     .filter(i => i.type === "Tool")
-    .filter(i => formAction === "checkout" ? i.status === "Available" : (i.status === "Checked Out" && i.checkedOutBy === (onBehalfOfUser || formUser)))
+    .filter(i => formAction === "checkout" ? i.status === "Available" : i.status === "Checked Out")
     .map(i => ({
       id: i.id,
       label: `[${i.id}] ${i.item}`,
@@ -3984,8 +4021,17 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
       `}</style>
 
+      {/* Gallery picker — no capture attr so Android shows Photos/Files */}
       <input
         ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif"
+        onChange={handlePhotoCapture}
+        style={{ display: "none" }}
+      />
+      {/* Camera input — capture forces direct camera open */}
+      <input
+        ref={cameraInputRef}
         type="file"
         accept="image/jpeg,image/png,image/gif"
         capture="environment"
@@ -3993,7 +4039,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         style={{ display: "none" }}
       />
 
-      {toast && <div style={{ ...S.toast, background: toast.type === "error" ? C.red : C.green }}>{toast.msg}</div>}
+      {toast && <div style={{ ...S.toast, background: toast.type === "error" ? C.red : toast.type === "info" ? C.accent : C.green }}>{toast.msg}</div>}
 
       <header style={S.header}>
         <div style={S.headerInner}>
@@ -4029,6 +4075,26 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {/* ---- DASHBOARD ---- */}
         {view === "dashboard" && (<div>
           <h2 style={S.pageTitle}>Dashboard</h2>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 16 }}>
+            <button onClick={() => {
+              if (!window.confirm("Clear local cache and re-sync from server? This will discard any unsynced local-only data.")) return;
+              localStorage.removeItem('warehouseInventory');
+              localStorage.removeItem('warehouseLog');
+              localStorage.removeItem('warehouseAccessLog');
+              flash("Cache cleared — syncing from server...", "info");
+              syncFromBackend(setInventory, setLog, setAccessLog);
+              setTimeout(() => flash("✓ Synced fresh from server"), 1500);
+            }} style={{ ...S.smBtn, color: C.orange, borderColor: C.orange }}>
+              🗑 Clear Local Cache
+            </button>
+            <button onClick={async () => {
+              flash("Syncing...", "info");
+              await syncFromBackend(setInventory, setLog, setAccessLog);
+              flash("✓ Synced");
+            }} style={{ ...S.smBtn, color: C.accent, borderColor: C.accent }}>
+              🔄 Sync Now
+            </button>
+          </div>
           <div style={S.statsGrid}>
             {[
               { n: inventory.length, l: "Total Items", c: C.accent },
@@ -4107,41 +4173,6 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                   </label>
                 </div>
               </div>
-
-            {/* Admin: Act on Behalf Of */}
-            {(currentUserRole === "Admin" || currentUserRole === "Warehouse Manager") && (
-              <div style={{ marginTop: 16, marginBottom: 16 }}>
-                <label style={{ ...S.lbl, display: "flex", alignItems: "center", gap: 8 }}>
-                  👥 Act On Behalf Of (Admin Only)
-                  <button 
-                    onClick={() => {
-                      setOnBehalfOfUser("");
-                      setFormUser(currentUser);
-                    }} 
-                    style={{ ...S.smBtn, padding: "4px 8px", fontSize: 11, opacity: onBehalfOfUser ? 1 : 0.3 }}
-                    disabled={!onBehalfOfUser}>
-                    ✕ Clear
-                  </button>
-                </label>
-                <SearchableSelect
-                  options={userOptions}
-                  value={onBehalfOfUser}
-                  onChange={val => {
-                    setOnBehalfOfUser(val);
-                    setFormUser(val || currentUser);
-                    setFormItems([]); // Clear selections when switching users
-                  }}
-                  placeholder="-- Select user (optional) --"
-                  style={{ background: onBehalfOfUser ? "rgba(255,193,7,0.1)" : C.surface, border: onBehalfOfUser ? "2px solid #ffc107" : `1px solid ${C.border}` }}
-                />
-                {onBehalfOfUser && (
-                  <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(255,193,7,0.15)", borderRadius: 6, border: "1px solid #ffc107", fontSize: 13, color: C.text }}>
-                    ⚠️ Acting as <strong>{onBehalfOfUser}</strong>
-                    {formAction === "return" && ` — Showing only ${onBehalfOfUser}'s checked-out items`}
-                  </div>
-                )}
-              </div>
-            )}
             </div>
             
             <div style={S.f}>
@@ -4254,8 +4285,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <th style={S.th}>Date</th><th style={S.th}>Time</th><th style={S.th}>Person</th><th style={S.th}>Purpose</th>
               </tr></thead><tbody>
                 {accessLog.map((a, i) => <tr key={i}>
-                  <td style={S.td}>{a.date}</td><td style={S.td}>{a.timestamp}</td>
-                  <td style={{ ...S.td, fontWeight: 600 }}>{a.user}</td><td style={S.td}>{a.purpose}</td>
+                  <td style={S.td}>{a.date || (a.timestamp ? a.timestamp.slice(0, 10) : "")}</td><td style={S.td}>{a.timestamp}</td>
+                  <td style={{ ...S.td, fontWeight: 600 }}>{a.user}</td><td style={S.td}>{a.purpose || a.reason || ""}</td>
                 </tr>)}
               </tbody></table></div>
             )}
@@ -4266,7 +4297,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {view === "inventory" && (<div>
           <div style={S.titleRow}>
             <h2 style={{ ...S.pageTitle, marginBottom: 0 }}>Inventory</h2>
-            <button onClick={() => setAddItemModal(true)} style={S.pBtn}>+ Add Item</button>
+            {isAdmin && <button onClick={() => setAddItemModal(true)} style={S.pBtn}>+ Add Item</button>}
           </div>
           <div style={S.filterBar}>
             <input type="text" placeholder="Search items..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.inp, maxWidth: 280, flex: 1 }}/>
@@ -4279,32 +4310,35 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             </div>
           </div>
           <div style={S.tw}><table style={S.tbl}><thead><tr>
-            <th style={S.th}>Code</th><th style={S.th}>Item</th><th style={S.th}>Brand</th><th style={S.th}>Model</th><th style={S.th}>Category</th><th style={S.th}>Location</th>
-            <th style={S.th}>Qty</th><th style={S.th}>Status</th><th style={S.th}>Photo</th><th style={S.th}>Held By</th><th style={S.th}>Actions</th>
+            <th style={S.th}>Code</th><th style={S.th}>Description</th><th style={S.th}>Brand</th>
+            <th style={S.th}>Status</th><th style={S.th}>Model</th><th style={S.th}>Category</th>
+            <th style={S.th}>Date Created</th><th style={S.th}>Qty</th><th style={S.th}>Photo</th><th style={S.th}>Actions</th>
           </tr></thead><tbody>
             {filteredInv.map(i => (
               <tr key={i.id} style={i.status === "Checked Out" ? { background: C.redDim } : i.qty === 0 ? { background: C.orangeDim } : {}}>
-                <td style={S.td}><code style={S.code}>{i.id}</code></td>
-                <td style={{ ...S.td, fontWeight: 500 }}>{i.item}</td>
+                <td style={S.td}>
+                  <button onClick={() => setAssetDetailItem(i)} style={{ ...S.lnkBtn, fontFamily: "monospace", fontWeight: 700, fontSize: 11, background: C.accentDim, padding: "2px 7px", borderRadius: 3, textDecoration: "none" }}>{i.id}</button>
+                </td>
+                <td style={{ ...S.td, fontWeight: 500, maxWidth: 220, whiteSpace: "normal", lineHeight: 1.3 }}>{i.item}</td>
                 <td style={S.td}>{i.brand || "—"}</td>
+                <td style={S.td}><SBadge status={i.status} qty={i.qty}/></td>
                 <td style={S.td}>{i.model || "—"}</td>
                 <td style={S.td}>{i.category}</td>
-                <td style={S.td}>{i.cabinet && i.shelf ? `${i.cabinet} / ${i.shelf}` : i.cabinet || i.shelf || "—"}</td>
+                <td style={{ ...S.td, fontSize: 11, color: C.textMuted }}>{i.createdAt ? i.createdAt.slice(0, 10) : "—"}</td>
                 <td style={S.td}>{i.qty}</td>
-                <td style={S.td}><SBadge status={i.status} qty={i.qty}/></td>
                 <td style={S.td}>
                   {i.photoUrl
                     ? <a href={i.photoUrl} target="_blank" rel="noopener noreferrer" style={S.photoLnk}>📸 View</a>
                     : <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(""); }} style={S.lnkBtn}>+ Photo</button>}
                 </td>
-                <td style={S.td}>{i.checkedOutBy || "—"}</td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {isAdmin && <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">✏️</button>}
                     <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(i.photoUrl || ""); }} style={S.tiny} title="Photo">📷</button>
                     {i.type === "Consumable" && (
                       <button onClick={() => { setRestockModal(i.id); setRestockQty(1); }} style={{ ...S.tiny, color: C.green, borderColor: C.green }} title="Restock">+</button>
                     )}
-                    <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">✕</button>
+                    {isAdmin && <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">✕</button>}
                   </div>
                 </td>
               </tr>
@@ -4317,7 +4351,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {view === "users" && (<div>
           <div style={S.titleRow}>
             <h2 style={{ ...S.pageTitle, marginBottom: 0 }}>User Management</h2>
-            <button onClick={() => setAddUserModal(true)} style={S.pBtn}>+ Add User</button>
+            {isAdmin && <button onClick={() => setAddUserModal(true)} style={S.pBtn}>+ Add User</button>}
           </div>
           <div style={S.card}><div style={S.tw}><table style={S.tbl}><thead><tr>
             <th style={S.th}>Name</th><th style={S.th}>Role</th><th style={S.th}>Status</th><th style={S.th}>Actions</th>
@@ -4329,10 +4363,11 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}><span style={{ ...S.badge, background: u.active ? C.green : C.textDim }}>{u.active ? "Active" : "Inactive"}</span></td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <button onClick={() => setUsers(p => p.map(x => x.name === u.name ? { ...x, active: !x.active } : x))} style={S.smBtn}>
+                    {isAdmin && <button onClick={() => setUsers(p => p.map(x => x.name === u.name ? { ...x, active: !x.active } : x))} style={S.smBtn}>
                       {u.active ? "Deactivate" : "Activate"}
-                    </button>
-                    <button onClick={() => { setUsers(p => p.filter(x => x.name !== u.name)); flash(`${u.name} removed`); }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>
+                    </button>}
+                    {isAdmin && <button onClick={() => { setUsers(p => p.filter(x => x.name !== u.name)); flash(`${u.name} removed`); }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>}
+                    {!isAdmin && <span style={{ color: C.textDim, fontSize: 11, fontStyle: "italic" }}>View only</span>}
                   </div>
                 </td>
               </tr>
@@ -4405,7 +4440,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               <input type="text" value={ni.id} onChange={e => setNi({ ...ni, id: e.target.value })} placeholder="e.g. 999999930 (or scan barcode)" style={S.inp}/>
               <span style={S.hint}>Asset Tag ID or barcode {scannedBarcode && "(Auto-filled from barcode)"}</span>
             </div>
-            <div style={S.f}><label style={S.lbl}>Item Name *</label>
+            <div style={S.f}><label style={S.lbl}>Description *</label>
               <input type="text" value={ni.item} onChange={e => setNi({ ...ni, item: e.target.value })} placeholder="e.g. Cordless drill/driver" style={S.inp}/>
             </div>
           </div>
@@ -4424,20 +4459,18 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           </div>
 
           <div style={S.mRow}>
-            <div style={S.f}><label style={S.lbl}>Cabinet (optional)</label>
-              <input type="text" value={ni.cabinet} onChange={e => setNi({ ...ni, cabinet: e.target.value })} 
-                placeholder="e.g. Main Warehouse, Storage Room 2" style={S.inp}/>
-              <span style={S.hint}>Leave blank if item has no specific location</span>
-            </div>
-            <div style={S.f}><label style={S.lbl}>Shelf (optional)</label>
-              <input type="text" value={ni.shelf} onChange={e => setNi({ ...ni, shelf: e.target.value })} 
-                placeholder="e.g. Top Shelf, Rack 3" style={S.inp}/>
-              <span style={S.hint}>Leave blank if not applicable</span>
-            </div>
             <div style={S.f}><label style={S.lbl}>Category</label>
               <select value={ni.category} onChange={e => setNi({ ...ni, category: e.target.value, type: detectType(e.target.value) })} style={S.sel}>
                 {["Adhesive","Cleaner","Door/Hardware","Electrical","Equipment","Filler & Putty","Floor Care/Wood & Parquet Wax","Furniture and fixtures","Lubricant","Networking equipment (router/VPN gateway)","Paint","Paint Remover","Sealant","Spray","Tiling materials","Wood Oil/Finish","Wood Stain"].map(c => <option key={c}>{c}</option>)}
               </select>
+            </div>
+            <div style={S.f}><label style={S.lbl}>Cabinet (optional)</label>
+              <input type="text" value={ni.cabinet} onChange={e => setNi({ ...ni, cabinet: e.target.value })}
+                placeholder="e.g. A, B, Door, Floor" style={S.inp}/>
+            </div>
+            <div style={S.f}><label style={S.lbl}>Shelf (optional)</label>
+              <input type="text" value={ni.shelf} onChange={e => setNi({ ...ni, shelf: e.target.value })}
+                placeholder="e.g. Top, Middle, Rack 3" style={S.inp}/>
             </div>
           </div>
 
@@ -4461,9 +4494,22 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           {/* V4: Photo Capture Section */}
           <div style={{ marginBottom: 16 }}>
             <label style={S.lbl}>📸 Item Photo (Optional)</label>
-            <button onClick={triggerPhotoCapture} disabled={uploadingPhoto} style={{ ...S.pBtn, background: uploadingPhoto ? C.textDim : C.brandBright }}>
-              {uploadingPhoto ? "Uploading..." : "Take / Upload Photo"}
-            </button>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={uploadingPhoto}
+                style={{ ...S.pBtn, background: uploadingPhoto ? C.textDim : C.brandBright, flex: 1 }}
+              >
+                {uploadingPhoto ? "Uploading..." : "📷 Take Photo"}
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingPhoto}
+                style={{ ...S.pBtn, background: uploadingPhoto ? C.textDim : C.brand, flex: 1 }}
+              >
+                🖼 Choose from Gallery
+              </button>
+            </div>
             {photoPreview && (
               <div style={{ marginTop: 10 }}>
                 <img src={photoPreview} alt="Preview" style={S.photoPreview} />
@@ -4475,8 +4521,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               </p>
             )}
             <span style={S.hint}>
-              {IS_DEMO 
-                ? "Demo mode: Photo preview works, but not saved to Drive" 
+              {IS_DEMO
+                ? "Demo mode: Photo preview works, but not saved to Drive"
                 : "Photo will be uploaded to Google Drive and linked to this item"}
             </span>
           </div>
@@ -4484,6 +4530,125 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           <button onClick={doAddItem} style={S.pBtn}>Add to Inventory</button>
         </div>
       </Modal>
+
+      {/* ── Edit Inventory Item Modal ── */}
+      <Modal open={editItemModal} onClose={() => { setEditItemModal(false); setEditItem(null); }} title="Edit Inventory Item" wide>
+        {editItem && (
+          <div style={S.mf}>
+            <div style={S.mRow}>
+              <div style={S.f}><label style={S.lbl}>Item ID / Code</label>
+                <input type="text" value={editItem.id} onChange={e => setEditItem({ ...editItem, id: e.target.value })} style={S.inp}/>
+                <span style={S.hint}>Changing the ID will update it everywhere</span>
+              </div>
+              <div style={S.f}><label style={S.lbl}>Description *</label>
+                <input type="text" value={editItem.item} onChange={e => setEditItem({ ...editItem, item: e.target.value })} style={S.inp}/>
+              </div>
+            </div>
+            <div style={S.mRow}>
+              <div style={S.f}><label style={S.lbl}>Brand</label>
+                <input type="text" value={editItem.brand || ''} onChange={e => setEditItem({ ...editItem, brand: e.target.value })} style={S.inp}/>
+              </div>
+              <div style={S.f}><label style={S.lbl}>Model</label>
+                <input type="text" value={editItem.model || ''} onChange={e => setEditItem({ ...editItem, model: e.target.value })} style={S.inp}/>
+              </div>
+            </div>
+            <div style={S.f}><label style={S.lbl}>Serial Number</label>
+              <input type="text" value={editItem.serialNo || ''} onChange={e => setEditItem({ ...editItem, serialNo: e.target.value })} style={S.inp}/>
+            </div>
+            <div style={S.mRow}>
+              <div style={S.f}><label style={S.lbl}>Category</label>
+                <select value={editItem.category} onChange={e => setEditItem({ ...editItem, category: e.target.value, type: detectType(e.target.value) })} style={S.sel}>
+                  {["Adhesive","Cleaner","Door/Hardware","Electrical","Equipment","Filler & Putty","Floor Care/Wood & Parquet Wax","Furniture and fixtures","Lubricant","Networking equipment (router/VPN gateway)","Paint","Paint Remover","Sealant","Spray","Tiling materials","Wood Oil/Finish","Wood Stain"].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={S.f}><label style={S.lbl}>Quantity</label>
+                <input
+                  type="text" inputMode="numeric" pattern="[0-9]*"
+                  value={editItem.qty}
+                  onChange={e => setEditItem({ ...editItem, qty: parseInt(e.target.value.replace(/[^0-9]/g, '')) || 0 })}
+                  style={{ ...S.inp, fontSize: 16 }}
+                />
+              </div>
+              <div style={S.f}><label style={S.lbl}>Status</label>
+                <select value={editItem.status || 'Available'} onChange={e => setEditItem({ ...editItem, status: e.target.value })} style={S.sel}>
+                  {["Available","Checked Out","Under Maintenance","Retired"].map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={S.mRow}>
+              <div style={S.f}><label style={S.lbl}>Cabinet (optional)</label>
+                <input type="text" value={editItem.cabinet || ''} onChange={e => setEditItem({ ...editItem, cabinet: e.target.value })} placeholder="e.g. A, B, Door, Floor" style={S.inp}/>
+              </div>
+              <div style={S.f}><label style={S.lbl}>Shelf (optional)</label>
+                <input type="text" value={editItem.shelf || ''} onChange={e => setEditItem({ ...editItem, shelf: e.target.value })} placeholder="e.g. Top, Middle, Rack 3" style={S.inp}/>
+              </div>
+            </div>
+            <div style={S.f}><label style={S.lbl}>Photo URL</label>
+              <input type="text" value={editItem.photoUrl || ''} onChange={e => setEditItem({ ...editItem, photoUrl: e.target.value })} placeholder="https://..." style={S.inp}/>
+              <span style={S.hint}>Paste a direct link or leave as-is to keep existing photo</span>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+              <button onClick={doEditItem} style={S.pBtn}>💾 Save Changes</button>
+              <button onClick={() => { setEditItemModal(false); setEditItem(null); }} style={S.smBtn}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+
+      {/* ── Asset Detail Popup (Code hyperlink click) ── */}
+      {assetDetailItem && (
+        <div style={S.overlay} onClick={() => setAssetDetailItem(null)}>
+          <div style={{ ...S.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <h3 style={{ ...S.modalTitle, fontSize: 13, color: C.textMuted, fontFamily: "monospace" }}>{assetDetailItem.id}</h3>
+              <button onClick={() => setAssetDetailItem(null)} style={S.modalX}>✕</button>
+            </div>
+            <div style={S.modalBody}>
+              <p style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 14, marginTop: 0 }}>{assetDetailItem.item}</p>
+              <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+                {assetDetailItem.photoUrl ? (
+                  <img src={assetDetailItem.photoUrl} alt={assetDetailItem.item}
+                    style={{ width: 130, height: 130, objectFit: "cover", borderRadius: 8, border: `2px solid ${C.borderLight}`, flexShrink: 0 }}
+                    onError={e => { e.target.style.display = "none"; }}
+                  />
+                ) : (
+                  <div style={{ width: 130, height: 130, borderRadius: 8, border: `2px dashed ${C.borderLight}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 11, flexShrink: 0 }}>
+                    No Photo
+                  </div>
+                )}
+                <table style={{ fontSize: 12, width: "100%", borderCollapse: "collapse" }}>
+                  {[
+                    ["Brand", assetDetailItem.brand],
+                    ["Model", assetDetailItem.model],
+                    ["Category", assetDetailItem.category],
+                    ["Type", assetDetailItem.type],
+                    ["Status", <SBadge status={assetDetailItem.status} qty={assetDetailItem.qty}/>],
+                    ["Qty", assetDetailItem.qty],
+                    ["Cabinet", assetDetailItem.cabinet],
+                    ["Shelf", assetDetailItem.shelf],
+                    ["Held By", assetDetailItem.checkedOutBy],
+                    ["Serial No", assetDetailItem.serialNo],
+                    ["Date Created", assetDetailItem.createdAt ? assetDetailItem.createdAt.slice(0, 10) : "—"],
+                  ].map(([label, value]) => (
+                    <tr key={label} style={{ borderBottom: `1px solid ${C.border}18` }}>
+                      <td style={{ padding: "5px 8px 5px 0", color: C.textMuted, fontWeight: 600, whiteSpace: "nowrap", verticalAlign: "top" }}>{label}</td>
+                      <td style={{ padding: "5px 0", color: C.text }}>{value || "—"}</td>
+                    </tr>
+                  ))}
+                </table>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                {isAdmin && (
+                  <button onClick={() => { setEditItem({ ...assetDetailItem, _originalId: assetDetailItem.id }); setEditItemModal(true); setAssetDetailItem(null); }}
+                    style={{ ...S.pBtn, flex: 1 }}>✏️ Edit Asset</button>
+                )}
+                <button onClick={() => setAssetDetailItem(null)} style={{ ...S.smBtn, flex: 1, textAlign: "center" }}>Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Modal open={addUserModal} onClose={() => setAddUserModal(false)} title="Add New User">
         <div style={S.mf}>
