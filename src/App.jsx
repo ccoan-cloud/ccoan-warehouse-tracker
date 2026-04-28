@@ -3400,6 +3400,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   // Forms - auto-fill with current user
   const [formUser, setFormUser] = useState(currentUser);
+  const [onBehalfOfUser, setOnBehalfOfUser] = useState(""); // Admin can act on behalf of others
   const [formItems, setFormItems] = useState([]); // Multi-select
   const [formAction, setFormAction] = useState("checkout");
   const [formNotes, setFormNotes] = useState("");
@@ -3693,25 +3694,33 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           errorMessages.push(`${it.item} already checked out`);
           return;
         }
+        const actualUser = onBehalfOfUser || formUser.trim();
+        const logNotes = onBehalfOfUser 
+          ? `${formNotes.trim()} [by ${currentUser} on behalf of ${onBehalfOfUser}]`.trim()
+          : formNotes.trim();
         setInventory(p => p.map(i => 
           i.id === itemId 
-            ? { ...i, status: "Checked Out", checkedOutBy: formUser.trim(), checkedOutAt: now() }
+            ? { ...i, status: "Checked Out", checkedOutBy: actualUser, checkedOutAt: now() }
             : i
         ));
         setLog(p => [{ 
           timestamp: now(), 
-          user: formUser.trim(), 
+          user: actualUser, 
           action: "checkout", 
           itemId: it.id, 
           itemName: it.item, 
           qty: 1, 
-          notes: formNotes.trim(), 
+          notes: logNotes, 
           location: `${it.cabinet}-${it.shelf}` 
         }, ...p]);
         // Sync to Google Sheets so all devices see this
-        callBackend({ action: "checkOut", itemId: it.id, userName: formUser.trim(), notes: formNotes.trim() });
+        callBackend({ action: "checkOut", itemId: it.id, userName: actualUser, notes: logNotes });
         successCount++;
       } else if (formAction === "return") {
+        const actualUser = onBehalfOfUser || formUser.trim();
+        const logNotes = onBehalfOfUser 
+          ? `${formNotes.trim()} [by ${currentUser} on behalf of ${onBehalfOfUser}]`.trim()
+          : formNotes.trim();
         setInventory(p => p.map(i => 
           i.id === itemId 
             ? { ...i, status: "Available", checkedOutBy: null, checkedOutAt: null }
@@ -3719,16 +3728,16 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         ));
         setLog(p => [{ 
           timestamp: now(), 
-          user: formUser.trim(), 
+          user: actualUser, 
           action: "return", 
           itemId: it.id, 
           itemName: it.item, 
           qty: 1, 
-          notes: formNotes.trim(), 
+          notes: logNotes, 
           location: `${it.cabinet}-${it.shelf}` 
         }, ...p]);
         // Sync to Google Sheets so all devices see this
-        callBackend({ action: "returnItem", itemId: it.id, userName: formUser.trim() });
+        callBackend({ action: "returnItem", itemId: it.id, userName: actualUser });
         successCount++;
       }
     });
@@ -3987,7 +3996,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   // Prepare options for multi-select
   const toolOptions = inventory
     .filter(i => i.type === "Tool")
-    .filter(i => formAction === "checkout" ? i.status === "Available" : (i.status === "Checked Out" && i.checkedOutBy === formUser))
+    .filter(i => formAction === "checkout" ? i.status === "Available" : (i.status === "Checked Out" && i.checkedOutBy === (onBehalfOfUser || formUser)))
     .map(i => ({
       id: i.id,
       label: `[${i.id}] ${i.item}`,
@@ -4185,6 +4194,42 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 </div>
               </div>
             </div>
+			
+            
+            {/* Admin: Act on Behalf Of */}
+            {(currentUserRole === "Warehouse Manager / Admin" || currentUserRole === "Admin" || currentUserRole === "Warehouse Manager") && (
+              <div style={{ marginTop: 16, marginBottom: 16 }}>
+                <label style={{ ...S.lbl, display: "flex", alignItems: "center", gap: 8 }}>
+                  👥 Act On Behalf Of (Admin Only)
+                  <button 
+                    onClick={() => {
+                      setOnBehalfOfUser("");
+                      setFormUser(currentUser);
+                    }} 
+                    style={{ ...S.smBtn, padding: "4px 8px", fontSize: 11, opacity: onBehalfOfUser ? 1 : 0.3 }}
+                    disabled={!onBehalfOfUser}>
+                    ✕ Clear
+                  </button>
+                </label>
+                <SearchableSelect
+                  options={userOptions}
+                  value={onBehalfOfUser}
+                  onChange={val => {
+                    setOnBehalfOfUser(val);
+                    setFormUser(val || currentUser);
+                    setFormItems([]); // Clear selections when switching users
+                  }}
+                  placeholder="-- Select user (optional) --"
+                />
+                {onBehalfOfUser && (
+                  <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(255,193,7,0.15)", borderRadius: 6, border: "1px solid #ffc107", fontSize: 13, color: C.text }}>
+                    ⚠️ Acting as <strong>{onBehalfOfUser}</strong>
+                    {formAction === "return" && ` — Showing only ${onBehalfOfUser}'s checked-out items`}
+                  </div>
+                )}
+              </div>
+            )}
+   
             
             <div style={S.f}>
               <label style={S.lbl}>Select Item(s) * (can select multiple)</label>
