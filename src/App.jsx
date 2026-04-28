@@ -3987,7 +3987,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   // Prepare options for multi-select
   const toolOptions = inventory
     .filter(i => i.type === "Tool")
-    .filter(i => formAction === "checkout" ? i.status === "Available" : i.status === "Checked Out")
+    .filter(i => formAction === "checkout" ? i.status === "Available" : (i.status === "Checked Out" && i.checkedOutBy === formUser))
     .map(i => ({
       id: i.id,
       label: `[${i.id}] ${i.item}`,
