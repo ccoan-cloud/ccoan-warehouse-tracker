@@ -4421,8 +4421,19 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}>{i.qty}</td>
                 <td style={S.td}>
                   {i.photoUrl
-                    ? <a href={i.photoUrl} target="_blank" rel="noopener noreferrer" style={S.photoLnk}>📸 View</a>
-                    : <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(""); }} style={S.lnkBtn}>+ Photo</button>}
+                    ? <a 
+                        href={(() => {
+                          const url = i.photoUrl;
+                          if (url.includes('drive.google.com/file/d/')) {
+                            const match = url.match(/\/file\/d\/([^\/]+)/);
+                            if (match) return `https://drive.google.com/uc?export=view&id=${match[1]}`;
+                          }
+                          return url;
+                          })()} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          style={S.photoLnk}>📸 View</a>
+                      : <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(""); }} style={S.lnkBtn}>+ Photo</button>}
                 </td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -4701,11 +4712,26 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               <p style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 14, marginTop: 0 }}>{assetDetailItem.item}</p>
               <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
                 {assetDetailItem.photoUrl ? (
-                  <img src={assetDetailItem.photoUrl} alt={assetDetailItem.item}
-                    style={{ width: 130, height: 130, objectFit: "cover", borderRadius: 8, border: `2px solid ${C.borderLight}`, flexShrink: 0 }}
-                    onError={e => { e.target.style.display = "none"; }}
-                  />
-                ) : (
+                  <img 
+                    src={(() => {
+                      const url = assetDetailItem.photoUrl;
+                      // Auto-convert Google Drive sharing links to direct image links
+                      if (url.includes('drive.google.com/file/d/')) {
+                        const match = url.match(/\/file\/d\/([^\/]+)/);
+                        if (match) {
+                          return `https://drive.google.com/uc?export=view&id=${match[1]}`;
+                        }
+                      }
+                    return url; // Return as-is if not a Drive link
+                  })()} 
+                  alt={assetDetailItem.item}
+                  style={{ width: 130, height: 130, objectFit: "cover", borderRadius: 8, border: `2px solid ${C.borderLight}`, flexShrink: 0 }}
+                  onError={e => { 
+                    console.log("Image failed to load:", assetDetailItem.photoUrl);
+                    e.target.style.display = "none"; 
+                  }}
+                />
+            ) : (
                   <div style={{ width: 130, height: 130, borderRadius: 8, border: `2px dashed ${C.borderLight}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 11, flexShrink: 0 }}>
                     No Photo
                   </div>
