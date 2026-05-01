@@ -4165,11 +4165,18 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               <div style={S.tw}><table style={S.tbl}><thead><tr>
                 <th style={S.th}>Item</th><th style={S.th}>Code</th><th style={S.th}>By</th><th style={S.th}>Since</th>
               </tr></thead><tbody>
-                {checkedOut.map(i => <tr key={i.id}>
-                  <td style={S.td}>{i.item}</td><td style={S.td}><code style={S.code}>{i.id}</code></td>
-                  <td style={{ ...S.td, color: C.accent, fontWeight: 600 }}>{i.checkedOutBy}</td>
-                  <td style={S.td}>{i.checkedOutAt}</td>
-                </tr>)}
+              {checkedOut.map(i => <tr key={i.id}>
+                <td style={S.td}>{i.item}</td>
+                <td style={S.td}>
+                  <button 
+                    onClick={() => setAssetDetailItem(i)} 
+                    style={{ ...S.lnkBtn, fontFamily: "monospace", fontWeight: 700, fontSize: 11, background: C.accentDim, padding: "2px 7px", borderRadius: 3, textDecoration: "none" }}>
+                    {i.id}
+                  </button>
+                </td>
+              <td style={{ ...S.td, color: C.accent, fontWeight: 600 }}>{i.checkedOutBy}</td>
+              <td style={S.td}>{i.checkedOutAt}</td>
+          </tr>)}
               </tbody></table></div>
             </div>
           )}
