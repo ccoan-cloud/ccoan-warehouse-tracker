@@ -30,22 +30,36 @@ async function syncFromBackend(setInventory, setLog, setAccessLog) {
     if (!result.success) return;
 
     // Helper to derive a readable date from a timestamp string
-    const deriveDate = (ts) => {
-      if (!ts) return "";
-      try {
-        return new Date(ts).toISOString().slice(0, 10);
-      } catch { return ts.slice(0, 10) || ""; }
-    };
+const deriveDate = (ts) => {
+  if (!ts) return "";
+  try {
+    const d = new Date(ts);
+    return d.toLocaleDateString("sv-SE", { timeZone: TZ });
+  } catch { return ts.slice(0, 10) || ""; }
+};
 
-    // Helper to format timestamp for display (strip trailing Z/ms if ISO)
-    const formatTs = (ts) => {
-      if (!ts) return "";
-      // Already a readable format like "2026-02-20 14:21:45"? Return as-is
-      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(ts)) return ts;
-      try {
-        return new Date(ts).toISOString().slice(0, 19).replace("T", " ");
-      } catch { return ts; }
+// Helper to format timestamp for display (convert to CET)
+const formatTs = (ts) => {
+  if (!ts) return "";
+  // Already a readable format like "2026-02-20 14:21:45"? Return as-is
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(ts)) return ts;
+  try {
+    const d = new Date(ts);
+    const opts = { 
+      timeZone: TZ, 
+      year: 'numeric', 
+      month: '2-digit', 
+      day: '2-digit',
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit',
+      hour12: false 
     };
+    const parts = new Intl.DateTimeFormat('sv-SE', opts).formatToParts(d);
+    const get = (type) => parts.find(p => p.type === type)?.value || '';
+    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+  } catch { return ts; }
+};
 
     // Backend is the source of truth — but preserve any local edits
     // that haven't yet been persisted to the backend (e.g. photo URL edits)
@@ -2974,7 +2988,23 @@ const INITIAL_USERS = [
   ];
 
 const TZ = "Europe/Amsterdam";
-const now = () => { const d = new Date(); const date = d.toLocaleDateString("sv-SE", { timeZone: TZ }); const time = d.toLocaleTimeString("nl-NL", { timeZone: TZ, hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }); return `${date} ${time}`; };
+const now = () => {
+  const d = new Date();
+  // Format: 2026-05-01 14:30:45 (CET)
+  const opts = { 
+    timeZone: TZ, 
+    year: 'numeric', 
+    month: '2-digit', 
+    day: '2-digit',
+    hour: '2-digit', 
+    minute: '2-digit', 
+    second: '2-digit',
+    hour12: false 
+  };
+  const parts = new Intl.DateTimeFormat('sv-SE', opts).formatToParts(d);
+  const get = (type) => parts.find(p => p.type === type)?.value || '';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+};
 const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: TZ });
 // ============================================================
 // SEARCHABLE MULTI-SELECT COMPONENT
@@ -3336,8 +3366,8 @@ export default function WarehouseTrackerWithAuth() {
         const result = JSON.parse(text);
         
         if (result.success) {
-          sessionStorage.setItem("warehouseUser", userName);
-          sessionStorage.setItem("warehouseUserRole", result.role || "");
+          localStorage.setItem("warehouseUser", userName);
+          localStorage.setItem("warehouseUserRole", result.role || "");
           setCurrentUser(userName);
           setCurrentUserRole(result.role || "");
           setIsLoggedIn(true);
