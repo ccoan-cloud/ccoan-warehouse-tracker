@@ -3436,7 +3436,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   });
   const [users, setUsers] = useState(() => {
     const saved = localStorage.getItem('warehouseUsers');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
+    return saved ? JSON.parse(saved) : [];
   });
   const [log, setLog] = useState(() => {
     const saved = localStorage.getItem('warehouseLog');
