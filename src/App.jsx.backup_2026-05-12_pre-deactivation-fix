@@ -3324,15 +3324,6 @@ export default function WarehouseTrackerWithAuth() {
     const savedUser = localStorage.getItem("warehouseUser");
     const savedRole = localStorage.getItem("warehouseUserRole");
     if (savedUser) {
-      // If the user was deactivated while their session was still valid, force logout
-      const savedUsers = JSON.parse(localStorage.getItem('warehouseUsers') || '[]');
-      const userRecord = savedUsers.find(u => u.name === savedUser);
-      if (userRecord && userRecord.active === false) {
-        localStorage.removeItem("warehouseUser");
-        localStorage.removeItem("warehouseUserRole");
-        localStorage.removeItem("warehouseSessionExpiry");
-        return;
-      }
       setCurrentUser(savedUser);
       setCurrentUserRole(savedRole || "");
       setIsLoggedIn(true);
@@ -3376,12 +3367,6 @@ export default function WarehouseTrackerWithAuth() {
         const result = JSON.parse(text);
         
         if (result.success) {
-          // Block deactivated users even if their PIN is correct
-          const savedUsers = JSON.parse(localStorage.getItem('warehouseUsers') || '[]');
-          const userRecord = savedUsers.find(u => u.name.toLowerCase() === userName.toLowerCase());
-          if (userRecord && userRecord.active === false) {
-            return { success: false, message: "Your account has been deactivated. Contact the administrator." };
-          }
           localStorage.setItem("warehouseUser", userName);
           localStorage.setItem("warehouseUserRole", result.role || "");
           setCurrentUser(userName);
