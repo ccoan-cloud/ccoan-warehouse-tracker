@@ -22,7 +22,7 @@ async function callBackend(payload) {
   }
 }
 
-async function syncFromBackend(setInventory, setLog, setAccessLog) {
+async function syncFromBackend(setInventory, setLog, setAccessLog, setUsers) {
   if (IS_DEMO) return;
   try {
     const res = await fetch(APPS_SCRIPT_URL, { method: "POST", redirect: "follow", body: JSON.stringify({ action: "getAll" }) });
@@ -100,6 +100,11 @@ const formatTs = (ts) => {
       }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       setAccessLog(access);
       localStorage.setItem('warehouseAccessLog', JSON.stringify(access));
+    }
+
+    if (result.users?.length > 0 && setUsers) {
+      setUsers(result.users);
+      localStorage.setItem('warehouseUsers', JSON.stringify(result.users));
     }
   } catch (err) {
     console.error("Sync error:", err.message);
@@ -3546,9 +3551,9 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   useEffect(() => {
     if (IS_DEMO) return;
     // Initial sync on mount
-    syncFromBackend(setInventory, setLog, setAccessLog);
+    syncFromBackend(setInventory, setLog, setAccessLog, setUsers);
     const interval = setInterval(() => {
-      syncFromBackend(setInventory, setLog, setAccessLog);
+      syncFromBackend(setInventory, setLog, setAccessLog, setUsers);
     }, 60000); // 60 seconds
     return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -4148,14 +4153,14 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               localStorage.removeItem('warehouseLog');
               localStorage.removeItem('warehouseAccessLog');
               flash("Cache cleared — syncing from server...", "info");
-              syncFromBackend(setInventory, setLog, setAccessLog);
+              syncFromBackend(setInventory, setLog, setAccessLog, setUsers);
               setTimeout(() => flash("✓ Synced fresh from server"), 1500);
             }} style={{ ...S.smBtn, color: C.orange, borderColor: C.orange }}>
               🗑 Clear Local Cache
             </button>
             <button onClick={async () => {
               flash("Syncing...", "info");
-              await syncFromBackend(setInventory, setLog, setAccessLog);
+              await syncFromBackend(setInventory, setLog, setAccessLog, setUsers);
               flash("✓ Synced");
             }} style={{ ...S.smBtn, color: C.accent, borderColor: C.accent }}>
               🔄 Sync Now
@@ -4483,7 +4488,12 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}><span style={{ ...S.badge, background: u.active ? C.green : C.textDim }}>{u.active ? "Active" : "Inactive"}</span></td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {isAdmin && <button onClick={() => setUsers(p => p.map(x => x.name === u.name ? { ...x, active: !x.active } : x))} style={S.smBtn}>
+                    {isAdmin && <button onClick={async () => {
+                      const newActive = !u.active;
+                      setUsers(p => p.map(x => x.name === u.name ? { ...x, active: newActive } : x));
+                      await callBackend({ action: "setUserActive", userName: u.name, active: newActive });
+                      flash(`${u.name} ${newActive ? "activated" : "deactivated"}`);
+                    }} style={S.smBtn}>
                       {u.active ? "Deactivate" : "Activate"}
                     </button>}
                     {isAdmin && <button onClick={() => { setUsers(p => p.filter(x => x.name !== u.name)); flash(`${u.name} removed`); }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>}
