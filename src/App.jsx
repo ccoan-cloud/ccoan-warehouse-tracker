@@ -146,6 +146,38 @@ const CCOAN_LOGO_WHITE = CONFIG.logo;
 const C = CONFIG.colors;
 
 // ============================================================
+// Role Hierarchy & Permission Helpers
+// ============================================================
+const SUPER_ADMIN_NAME = "Samuel";
+const SUPER_ADMIN_ROLE = "Super Admin";
+
+const ROLE_LEVEL = {
+  "Super Admin":               4,
+  "Warehouse Manager / Admin": 3,
+  "Group Leader":              2,
+  "Department Leader":         2,
+  "Overseer":                  2,
+  "Maintenance":               1,
+};
+
+// Is the currently logged-in user a Super Admin?
+const isSuperAdmin = (role) => role === SUPER_ADMIN_ROLE;
+
+// Is the currently logged-in user an Admin or above?
+const isAdmin = (role) => (ROLE_LEVEL[role] || 0) >= 3;
+
+// Can the current user manage (edit/delete) a target user?
+const canManageUser = (currentRole, targetName, targetRole) => {
+  // Super Admin can manage anyone
+  if (isSuperAdmin(currentRole)) return true;
+  // Nobody can touch the Super Admin account
+  if (targetName === SUPER_ADMIN_NAME || targetRole === SUPER_ADMIN_ROLE) return false;
+  // Admins can manage non-super-admin users
+  if (isAdmin(currentRole)) return true;
+  return false;
+};
+
+// ============================================================
 
 const INITIAL_USERS = [
   { name: "Samuel", role: "Warehouse Manager / Admin", active: true },
@@ -594,7 +626,23 @@ export default function WarehouseTrackerWithAuth() {
 // Main App Component (Protected)
 // ============================================================
 function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
-  const isAdmin = currentUserRole === "Warehouse Manager / Admin";
+  const ROLES_LIST = isSuperAdmin(currentUserRole)
+    ? [
+        "Super Admin",
+        "Warehouse Manager / Admin",
+        "Group Leader",
+        "Department Leader",
+        "Overseer",
+        "Maintenance",
+      ]
+    : [
+        "Warehouse Manager / Admin",
+        "Group Leader",
+        "Department Leader",
+        "Overseer",
+        "Maintenance",
+      ];
+
   const [view, setView] = useState("dashboard");
   
   // Load from localStorage or use initial data
@@ -1620,7 +1668,9 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {view === "inventory" && (<div>
           <div style={S.titleRow}>
             <h2 style={{ ...S.pageTitle, marginBottom: 0 }}>Inventory</h2>
-            {isAdmin && <button onClick={() => setAddItemModal(true)} style={S.pBtn}>+ Add Item</button>}
+            {isAdmin(currentUserRole) && (
+              <button onClick={() => setAddItemModal(true)} style={S.pBtn}>+ Add Item</button>
+            )}
           </div>
           <div style={S.filterBar}>
             <input type="text" placeholder="Search items..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.inp, maxWidth: 280, flex: 1 }}/>
@@ -1667,12 +1717,12 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 </td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {isAdmin && <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">✏️</button>}
+                    {isAdmin(currentUserRole) && <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">✏️</button>}
                     <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(i.photoUrl || ""); }} style={S.tiny} title="Photo">📷</button>
                     {i.type === "Consumable" && (
                       <button onClick={() => { setRestockModal(i.id); setRestockQty(1); }} style={{ ...S.tiny, color: C.green, borderColor: C.green }} title="Restock">+</button>
                     )}
-                    {isAdmin && <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">✕</button>}
+                    {isAdmin(currentUserRole) && <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">✕</button>}
                   </div>
                 </td>
               </tr>
@@ -1685,28 +1735,51 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         {view === "users" && (<div>
           <div style={S.titleRow}>
             <h2 style={{ ...S.pageTitle, marginBottom: 0 }}>User Management</h2>
-            {isAdmin && <button onClick={() => setAddUserModal(true)} style={S.pBtn}>+ Add User</button>}
+            {isAdmin(currentUserRole) && <button onClick={() => setAddUserModal(true)} style={S.pBtn}>+ Add User</button>}
           </div>
           <div style={S.card}><div style={S.tw}><table style={S.tbl}><thead><tr>
             <th style={S.th}>Name</th><th style={S.th}>Role</th><th style={S.th}>Status</th><th style={S.th}>Actions</th>
           </tr></thead><tbody>
             {users.map(u => (
               <tr key={u.name} style={!u.active ? { opacity: 0.4 } : {}}>
-                <td style={{ ...S.td, fontWeight: 600 }}>{u.name}</td>
+                <td style={{ ...S.td, fontWeight: 600 }}>
+                  {u.name}
+                  {u.role === SUPER_ADMIN_ROLE && (
+                    <span style={{
+                      marginLeft: 8,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      background: 'rgba(232,146,42,0.18)',
+                      color: C.orange,
+                      letterSpacing: '0.05em',
+                      textTransform: 'uppercase',
+                      border: `1px solid ${C.orangeDim}`,
+                    }}>Owner</span>
+                  )}
+                </td>
                 <td style={S.td}>{u.role}</td>
                 <td style={S.td}><span style={{ ...S.badge, background: u.active ? C.green : C.textDim }}>{u.active ? "Active" : "Inactive"}</span></td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {isAdmin && <button onClick={async () => {
-                      const newActive = !u.active;
-                      setUsers(p => p.map(x => x.name === u.name ? { ...x, active: newActive } : x));
-                      await callBackend({ action: "setUserActive", userName: u.name, active: newActive });
-                      flash(`${u.name} ${newActive ? "activated" : "deactivated"}`);
-                    }} style={S.smBtn}>
-                      {u.active ? "Deactivate" : "Activate"}
-                    </button>}
-                    {isAdmin && <button onClick={() => { setUsers(p => p.filter(x => x.name !== u.name)); flash(`${u.name} removed`); }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>}
-                    {!isAdmin && <span style={{ color: C.textDim, fontSize: 11, fontStyle: "italic" }}>View only</span>}
+                    {canManageUser(currentUserRole, u.name, u.role) ? (
+                      <>
+                        <button onClick={async () => {
+                          const newActive = !u.active;
+                          setUsers(p => p.map(x => x.name === u.name ? { ...x, active: newActive } : x));
+                          await callBackend({ action: "setUserActive", userName: u.name, active: newActive });
+                          flash(`${u.name} ${newActive ? "activated" : "deactivated"}`);
+                        }} style={S.smBtn}>
+                          {u.active ? "Deactivate" : "Activate"}
+                        </button>
+                        <button onClick={() => { setUsers(p => p.filter(x => x.name !== u.name)); flash(`${u.name} removed`); }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>
+                      </>
+                    ) : (
+                      u.role === SUPER_ADMIN_ROLE
+                        ? <span style={{ fontSize: 12, color: C.textDim }}>🔒 Protected</span>
+                        : <span style={{ color: C.textDim, fontSize: 11, fontStyle: "italic" }}>View only</span>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -1993,7 +2066,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 </table>
               </div>
               <div style={{ display: "flex", gap: 10 }}>
-                {isAdmin && (
+                {isAdmin(currentUserRole) && (
                   <button onClick={() => { setEditItem({ ...assetDetailItem, _originalId: assetDetailItem.id }); setEditItemModal(true); setAssetDetailItem(null); }}
                     style={{ ...S.pBtn, flex: 1 }}>✏️ Edit Asset</button>
                 )}
@@ -2011,7 +2084,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           </div>
           <div style={S.f}><label style={S.lbl}>Role</label>
             <select value={nu.role} onChange={e => setNu({ ...nu, role: e.target.value })} style={S.sel}>
-              {["Warehouse Manager","Maintenance","Admin","Volunteer","Pastor","Group Leader","Other"].map(r => <option key={r}>{r}</option>)}
+              {ROLES_LIST.map(r => <option key={r}>{r}</option>)}
             </select>
           </div>
           <div style={S.f}><label style={S.lbl}>4-Digit PIN *</label>

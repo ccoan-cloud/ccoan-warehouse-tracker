@@ -357,16 +357,29 @@ function addUser(userName, role, pin) {
 }
 
 function deleteUser(userName) {
+  // ── SUPER ADMIN PROTECTION ──────────────────────────────
+  if (String(userName).trim() === "Samuel") {
+    return [false, { message: "The Super Admin account cannot be deleted." }];
+  }
+  // ────────────────────────────────────────────────────────
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
   const data = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(userName)) { sheet.deleteRow(i+1); return [true, { message: "Deleted: "+userName }]; }
+    if (String(data[i][0]) === String(userName)) {
+      sheet.deleteRow(i + 1);
+      return [true, { message: "Deleted: " + userName }];
+    }
   }
-  return [false, { message: "User not found: "+userName }];
+  return [false, { message: "User not found: " + userName }];
 }
 
 function setUserActive(userName, active) {
   if (!userName) return [false, { message: "No userName provided" }];
+  // ── SUPER ADMIN PROTECTION ──────────────────────────────
+  if (String(userName).trim() === "Samuel" && active === false) {
+    return [false, { message: "The Super Admin account cannot be deactivated." }];
+  }
+  // ────────────────────────────────────────────────────────
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
   const data = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
