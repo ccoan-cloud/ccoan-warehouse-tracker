@@ -1,15 +1,27 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+﻿import React, { useState, useEffect, useCallback, useRef } from "react";
+import CONFIG, { switchBranch, getAllBranches, detectBranch } from './config';
 import { INITIAL_INVENTORY } from './demoData';
 
 // ============================================================
 // CONFIGURATION
 // ============================================================
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxNfnq1O1w686gX3Uapy-8fpnVijW9fXBApBb0yFwGscCwhKYajXjbyvgI-iJaS1ag/exec";
+const APPS_SCRIPT_URL = CONFIG.appsScriptUrl;
 const IS_DEMO = false;
 
-// ============================================================
+// Branch-specific localStorage keys — Almere and NY never share cache
+const BRANCH_PREFIX = CONFIG.id;
+const LS_USER      = `${BRANCH_PREFIX}_warehouseUser`;
+const LS_ROLE      = `${BRANCH_PREFIX}_warehouseUserRole`;
+const LS_EXPIRY    = `${BRANCH_PREFIX}_warehouseSessionExpiry`;
+const LS_INVENTORY = `${BRANCH_PREFIX}_warehouseInventory`;
+const LS_LOG       = `${BRANCH_PREFIX}_warehouseLog`;
+const LS_ACCESS    = `${BRANCH_PREFIX}_warehouseAccessLog`;
+const LS_USERS     = `${BRANCH_PREFIX}_warehouseUsers`;
+const LS_PENDING   = `${BRANCH_PREFIX}_warehousePendingEdits`;
+
+// ══════════════════════════════════════════════════════════════════════════
 // BACKEND SYNC - Simple functions at top level (no scope issues)
-// ============================================================
+// ══════════════════════════════════════════════════════════════════════════
 
 async function callBackend(payload) {
   if (IS_DEMO) return;
@@ -62,16 +74,16 @@ const formatTs = (ts) => {
   } catch { return ts; }
 };
 
-    // Backend is the source of truth â€” but preserve any local edits
+    // Backend is the source of truth — but preserve any local edits
     // that haven't yet been persisted to the backend (e.g. photo URL edits)
     if (result.inventory?.length > 0) {
-      const pendingEdits = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+      const pendingEdits = JSON.parse(localStorage.getItem(LS_PENDING) || '{}');
       const merged = result.inventory.map(item => {
         const localEdit = pendingEdits[item.id];
         return localEdit ? { ...item, ...localEdit } : item;
       });
       setInventory(merged);
-      localStorage.setItem('warehouseInventory', JSON.stringify(merged));
+      localStorage.setItem(LS_INVENTORY, JSON.stringify(merged));
     }
 
     if (result.transactions?.length > 0) {
@@ -86,7 +98,7 @@ const formatTs = (ts) => {
         location: t.location || ""
       })).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       setLog(trans);
-      localStorage.setItem('warehouseLog', JSON.stringify(trans));
+      localStorage.setItem(LS_LOG, JSON.stringify(trans));
     }
 
     if (result.accessLog?.length > 0) {
@@ -100,12 +112,12 @@ const formatTs = (ts) => {
         };
       }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       setAccessLog(access);
-      localStorage.setItem('warehouseAccessLog', JSON.stringify(access));
+      localStorage.setItem(LS_ACCESS, JSON.stringify(access));
     }
 
     if (result.users?.length > 0 && setUsers) {
       setUsers(result.users);
-      localStorage.setItem('warehouseUsers', JSON.stringify(result.users));
+      localStorage.setItem(LS_USERS, JSON.stringify(result.users));
     }
   } catch (err) {
     console.error("Sync error:", err.message);
@@ -126,38 +138,14 @@ const DEMO_CREDENTIALS = {
 };
 
 // CCOAN Logo
-const CCOAN_LOGO_WHITE = "https://ccoan.com/almere/wp-content/uploads/sites/12/2024/04/CCOAN-Logo-White-950w-With-Shadow-2.png";
+const CCOAN_LOGO_WHITE = CONFIG.logo;
 
 // ============================================================
 // CCOAN Brand Colors
 // ============================================================
-const C = {
-  brand: "#1E2470",
-  brandLight: "#2A32A0",
-  brandBright: "#3D48C8",
-  brandDim: "rgba(30,36,112,0.18)",
-  brandBorder: "rgba(30,36,112,0.45)",
-  brandSoft: "rgba(61,72,200,0.12)",
-  accent: "#4A6CF7",
-  accentDim: "rgba(74,108,247,0.14)",
-  accentBorder: "rgba(74,108,247,0.35)",
-  bg: "#0B0D14",
-  surface: "#12151E",
-  surfaceRaised: "#181C28",
-  border: "#1E2230",
-  borderLight: "#282E40",
-  text: "#E8E8EC",
-  textMuted: "#8890A4",
-  textDim: "#5A6178",
-  white: "#FFFFFF",
-  red: "#E04040",
-  redDim: "rgba(224,64,64,0.12)",
-  green: "#2EAA5A",
-  greenDim: "rgba(46,170,90,0.12)",
-  orange: "#E8922A",
-  orangeDim: "rgba(232,146,42,0.12)",
-};
+const C = CONFIG.colors;
 
+// ============================================================
 
 const INITIAL_USERS = [
   { name: "Samuel", role: "Warehouse Manager / Admin", active: true },
@@ -166,14 +154,14 @@ const INITIAL_USERS = [
   { name: "Nikos", role: "Group Leader", active: true },
   { name: "Davide", role: "Group Leader", active: true },
   { name: "Orlando", role: "Maintenance", active: true },
-  { name: "Angelos", role: "Maintenance", active: true },
+  { name: "Angelo", role: "Maintenance", active: true },
   { name: "Sergei", role: "Maintenance", active: true },
   { name: "MOG George", role: "Department Leader", active: true },
   { name: "MOG Giannis", role: "Department Leader", active: true },
   { name: "MOG Harry", role: "Overseer", active: true },
   ];
 
-const TZ = "Europe/Amsterdam";
+const TZ = CONFIG.timezone;
 const now = () => {
   const d = new Date();
   // Format: 2026-05-01 14:30:45 (CET)
@@ -245,14 +233,14 @@ function SearchableMultiSelect({ items, selectedIds, onChange, placeholder, disa
                     }}
                     style={S.multiSelectTagX}
                   >
-                    âœ•
+                    ✕
                   </button>
                 </span>
               ))}
             </div>
           )}
         </div>
-        <span style={S.multiSelectArrow}>{isOpen ? "â–²" : "â–¼"}</span>
+        <span style={S.multiSelectArrow}>{isOpen ? "▲" : "▼"}</span>
       </div>
 
       {isOpen && (
@@ -335,7 +323,7 @@ function SearchableSelect({ options, value, onChange, placeholder, disabled }) {
         <span style={selectedOption ? {} : { color: C.textDim }}>
           {selectedOption ? selectedOption.label : placeholder}
         </span>
-        <span style={S.searchSelectArrow}>{isOpen ? "â–²" : "â–¼"}</span>
+        <span style={S.searchSelectArrow}>{isOpen ? "▲" : "▼"}</span>
       </div>
 
       {isOpen && (
@@ -416,14 +404,14 @@ function LoginScreen({ onLogin }) {
         <img src={CCOAN_LOGO_WHITE} alt="CCOAN" style={S.loginLogo} onError={e => { e.target.style.display = "none"; }} />
         
         <div style={S.loginTitle}>WAREHOUSE TRACKER</div>
-        <div style={S.loginSub}>CCOAN â€” Almere</div>
+        <div style={S.loginSub}>{CONFIG.country} {CONFIG.name}</div>
         
         {IS_DEMO && (
           <div style={S.demoInfo}>
             <strong>Demo Mode</strong><br/>
             Test Credentials:<br/>
-            Sammy / 1234 â€¢ Peter / 5678<br/>
-            John / 9012 â€¢ David / 7890
+            Sammy / 1234 • Peter / 5678<br/>
+            John / 9012 • David / 7890
           </div>
         )}
         
@@ -459,12 +447,12 @@ function LoginScreen({ onLogin }) {
           {error && <div style={S.loginError}>{error}</div>}
           
           <button type="submit" style={S.loginBtn} disabled={loading}>
-            {loading ? "Logging in..." : "ðŸ”“ Login"}
+            {loading ? "Logging in..." : "🔓 Login"}
           </button>
         </form>
         
         <div style={S.loginFooter}>
-          Secure Access â€¢ V4 Enhanced
+          Secure Access • V4 Enhanced
         </div>
       </div>
     </div>
@@ -481,7 +469,7 @@ function Modal({ open, onClose, title, children, wide }) {
       <div style={{ ...S.modal, ...(wide ? { maxWidth: 680 } : {}) }} onClick={e => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h3 style={S.modalTitle}>{title}</h3>
-          <button onClick={onClose} style={S.modalX}>âœ•</button>
+          <button onClick={onClose} style={S.modalX}>✕</button>
         </div>
         <div style={S.modalBody}>{children}</div>
       </div>
@@ -498,24 +486,24 @@ export default function WarehouseTrackerWithAuth() {
   const [currentUserRole, setCurrentUserRole] = useState("");
 
   useEffect(() => {
-    const expiry = localStorage.getItem("warehouseSessionExpiry");
+    const expiry = localStorage.getItem(LS_EXPIRY);
     if (expiry && Date.now() > parseInt(expiry)) {
       // Session expired (7 days), clear everything
-      localStorage.removeItem("warehouseUser");
-      localStorage.removeItem("warehouseUserRole");
-      localStorage.removeItem("warehouseSessionExpiry");
+      localStorage.removeItem(LS_USER);
+      localStorage.removeItem(LS_ROLE);
+      localStorage.removeItem(LS_EXPIRY);
       return;
     }
-    const savedUser = localStorage.getItem("warehouseUser");
-    const savedRole = localStorage.getItem("warehouseUserRole");
+    const savedUser = localStorage.getItem(LS_USER);
+    const savedRole = localStorage.getItem(LS_ROLE);
     if (savedUser) {
       // If the user was deactivated while their session was still valid, force logout
-      const savedUsers = JSON.parse(localStorage.getItem('warehouseUsers') || '[]');
+      const savedUsers = JSON.parse(localStorage.getItem(LS_USERS) || '[]');
       const userRecord = savedUsers.find(u => u.name === savedUser);
       if (userRecord && userRecord.active === false) {
-        localStorage.removeItem("warehouseUser");
-        localStorage.removeItem("warehouseUserRole");
-        localStorage.removeItem("warehouseSessionExpiry");
+        localStorage.removeItem(LS_USER);
+        localStorage.removeItem(LS_ROLE);
+        localStorage.removeItem(LS_EXPIRY);
         return;
       }
       setCurrentUser(savedUser);
@@ -532,9 +520,9 @@ export default function WarehouseTrackerWithAuth() {
         const role = user ? user.role : "";
         
         const sevenDays = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-        localStorage.setItem("warehouseUser", userName);
-        localStorage.setItem("warehouseUserRole", role);
-        localStorage.setItem("warehouseSessionExpiry", (Date.now() + sevenDays).toString());
+        localStorage.setItem(LS_USER, userName);
+        localStorage.setItem(LS_ROLE, role);
+        localStorage.setItem(LS_EXPIRY, (Date.now() + sevenDays).toString());
         setCurrentUser(userName);
         setCurrentUserRole(role);
         setIsLoggedIn(true);
@@ -562,13 +550,13 @@ export default function WarehouseTrackerWithAuth() {
         
         if (result.success) {
           // Block deactivated users even if their PIN is correct
-          const savedUsers = JSON.parse(localStorage.getItem('warehouseUsers') || '[]');
+          const savedUsers = JSON.parse(localStorage.getItem(LS_USERS) || '[]');
           const userRecord = savedUsers.find(u => u.name.toLowerCase() === userName.toLowerCase());
           if (userRecord && userRecord.active === false) {
             return { success: false, message: "Your account has been deactivated. Contact the administrator." };
           }
-          localStorage.setItem("warehouseUser", userName);
-          localStorage.setItem("warehouseUserRole", result.role || "");
+          localStorage.setItem(LS_USER, userName);
+          localStorage.setItem(LS_ROLE, result.role || "");
           setCurrentUser(userName);
           setCurrentUserRole(result.role || "");
           setIsLoggedIn(true);
@@ -586,9 +574,9 @@ export default function WarehouseTrackerWithAuth() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("warehouseUser");
-    localStorage.removeItem("warehouseUserRole");
-    localStorage.removeItem("warehouseSessionExpiry");
+    localStorage.removeItem(LS_USER);
+    localStorage.removeItem(LS_ROLE);
+    localStorage.removeItem(LS_EXPIRY);
     setCurrentUser("");
     setCurrentUserRole("");
     setIsLoggedIn(false);
@@ -611,19 +599,19 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   
   // Load from localStorage or use initial data
   const [inventory, setInventory] = useState(() => {
-    const saved = localStorage.getItem('warehouseInventory');
+    const saved = localStorage.getItem(LS_INVENTORY);
     return saved ? JSON.parse(saved) : INITIAL_INVENTORY;
   });
   const [users, setUsers] = useState(() => {
-    const saved = localStorage.getItem('warehouseUsers');
+    const saved = localStorage.getItem(LS_USERS);
     return saved ? JSON.parse(saved) : [];
   });
   const [log, setLog] = useState(() => {
-    const saved = localStorage.getItem('warehouseLog');
+    const saved = localStorage.getItem(LS_LOG);
     return saved ? JSON.parse(saved) : [];
   });
   const [accessLog, setAccessLog] = useState(() => {
-    const saved = localStorage.getItem('warehouseAccessLog');
+    const saved = localStorage.getItem(LS_ACCESS);
     return saved ? JSON.parse(saved) : [];
   });
   const [toast, setToast] = useState(null);
@@ -712,22 +700,22 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   // Save to localStorage whenever data changes
   useEffect(() => {
-    localStorage.setItem('warehouseInventory', JSON.stringify(inventory));
+    localStorage.setItem(LS_INVENTORY, JSON.stringify(inventory));
   }, [inventory]);
 
   useEffect(() => {
-    localStorage.setItem('warehouseUsers', JSON.stringify(users));
+    localStorage.setItem(LS_USERS, JSON.stringify(users));
   }, [users]);
 
   useEffect(() => {
-    localStorage.setItem('warehouseLog', JSON.stringify(log));
+    localStorage.setItem(LS_LOG, JSON.stringify(log));
   }, [log]);
 
   useEffect(() => {
-    localStorage.setItem('warehouseAccessLog', JSON.stringify(accessLog));
+    localStorage.setItem(LS_ACCESS, JSON.stringify(accessLog));
   }, [accessLog]);
 
-  // â”€â”€ Auto-sync from backend every 60 seconds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Auto-sync from backend every 60 seconds ──────────────────────────────
   useEffect(() => {
     if (IS_DEMO) return;
     // Initial sync on mount
@@ -740,7 +728,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
   const activeUsers = users.filter(u => u.active);
 
-  // â”€â”€ Add Item barcode scanner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Add Item barcode scanner ──────────────────────────────────────────────
   const startBarcodeScanner = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       flash("Camera not available on this browser.", "error");
@@ -751,7 +739,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       streamRef.current = stream;
       scannerActiveRef.current = true;
       setScannerActive(true);
-      // Assign stream to video â€” use a short delay so React renders the <video> first
+      // Assign stream to video — use a short delay so React renders the <video> first
       setTimeout(() => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -761,7 +749,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             detectBarcode(det);
           } else {
             // BarcodeDetector not supported (Samsung Internet, Firefox)
-            // Camera is live but detection unavailable â€” user can still see the barcode
+            // Camera is live but detection unavailable — user can still see the barcode
             // and type it manually. Show a helpful message.
             flash("Live barcode detection not supported on this browser. You can still use the camera to view the barcode and type it below.", "info");
           }
@@ -775,7 +763,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       scannerActiveRef.current = false;
       setScannerActive(false);
       if (err.name === 'NotAllowedError') {
-        flash("Camera permission denied. Go to browser settings â†’ Site settings â†’ Camera â†’ Allow.", "error");
+        flash("Camera permission denied. Go to browser settings → Site settings → Camera → Allow.", "error");
       } else if (err.name === 'NotFoundError') {
         flash("No camera found on this device.", "error");
       } else {
@@ -785,7 +773,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   };
 
   const detectBarcode = async (detector) => {
-    // Use ref not state â€” avoids stale closure in the async loop
+    // Use ref not state — avoids stale closure in the async loop
     if (!scannerActiveRef.current || !videoRef.current) return;
     try {
       const barcodes = await detector.detect(videoRef.current);
@@ -793,19 +781,19 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         const barcode = barcodes[0].rawValue;
         stopBarcodeScanner();
         
-        // âœ… Check for duplicates immediately after scanning
+        // ✅ Check for duplicates immediately after scanning
         const exists = inventory.find(i => String(i.id).toUpperCase() === String(barcode).toUpperCase());
         if (exists) {
-          flash(`âš ï¸ Item ID "${barcode}" already exists: ${exists.item}. Choose a different item or edit the existing one.`, "error");
+          flash(`⚠️ Item ID "${barcode}" already exists: ${exists.item}. Choose a different item or edit the existing one.`, "error");
           setScannedBarcode("");
           setNi(prev => ({ ...prev, id: "" }));
           return;
         }
         
-        // ID is unique â€” proceed
+        // ID is unique — proceed
         setScannedBarcode(barcode);
         setNi(prev => ({ ...prev, id: barcode }));
-        flash(`âœ“ Barcode scanned: ${barcode}`);
+        flash(`✓ Barcode scanned: ${barcode}`);
         return;
       }
     } catch (err) { /* keep scanning */ }
@@ -1035,11 +1023,11 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     const newItem = { ...ni, id: ni.id.trim(), item: ni.item.trim(), status: "Available", checkedOutBy: null, checkedOutAt: null, createdAt: now() };
     setInventory(p => [...p, newItem]);
     // Save to pending edits so createdAt survives sync
-    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    const pending = JSON.parse(localStorage.getItem(LS_PENDING) || '{}');
     pending[newItem.id] = newItem;
-    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
+    localStorage.setItem(LS_PENDING, JSON.stringify(pending));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "added", itemId: ni.id.trim(), itemName: ni.item.trim(), qty: ni.qty, notes: `New item. Brand: ${ni.brand || "none"}. Model: ${ni.model || "none"}. Photo: ${ni.photoUrl || "none"}. Barcode: ${scannedBarcode || "none"}`, location: (ni.cabinet || ni.shelf) ? `${ni.cabinet}-${ni.shelf}` : "No location" }, ...p]);
-    // âœ… Sync to Google Sheets so all devices see the new item
+    // ✅ Sync to Google Sheets so all devices see the new item
     callBackend({ action: "addItem", item: newItem });
     flash(`${ni.item.trim()} added successfully!`);
     
@@ -1060,10 +1048,10 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     setInventory(p => p.map(i => i.id === editItem._originalId ? updatedItem : i));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "edited", itemId: updatedItem.id, itemName: updatedItem.item, qty: updatedItem.qty, notes: `Item updated`, location: "" }, ...p]);
     // Save edit locally so it survives backend sync overwrites
-    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    const pending = JSON.parse(localStorage.getItem(LS_PENDING) || '{}');
     pending[updatedItem.id] = updatedItem;
     if (editItem._originalId !== updatedItem.id) delete pending[editItem._originalId];
-    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
+    localStorage.setItem(LS_PENDING, JSON.stringify(pending));
     callBackend({ action: "updateItem", item: updatedItem });
     flash(`${updatedItem.item} updated`);
     setEditItemModal(false);
@@ -1075,9 +1063,9 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     setInventory(p => p.filter(i => i.id !== id));
     setLog(p => [{ timestamp: now(), user: currentUser, action: "deleted", itemId: id, itemName: it?.item || id, qty: 0, notes: "Removed", location: "" }, ...p]);
     // Clear from pending edits
-    const pending = JSON.parse(localStorage.getItem('warehousePendingEdits') || '{}');
+    const pending = JSON.parse(localStorage.getItem(LS_PENDING) || '{}');
     delete pending[id];
-    localStorage.setItem('warehousePendingEdits', JSON.stringify(pending));
+    localStorage.setItem(LS_PENDING, JSON.stringify(pending));
     callBackend({ action: "deleteItem", itemId: id });
     flash(`${it?.item || id} removed`);
     setConfirmDel(null);
@@ -1088,7 +1076,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     if (!nu.pin.trim() || nu.pin.length !== 4) return flash("4-digit PIN required", "error");
     if (users.find(u => u.name.toLowerCase() === nu.name.trim().toLowerCase())) return flash("User exists", "error");
     setUsers(p => [...p, { name: nu.name.trim(), role: nu.role, pin: nu.pin, active: true }]);
-    // âœ… Sync to Google Sheets so the new user can log in from any device
+    // ✅ Sync to Google Sheets so the new user can log in from any device
     callBackend({ action: "addUser", userName: nu.name.trim(), role: nu.role, pin: nu.pin });
     flash(`${nu.name.trim()} added`);
     setNu({ name: "", role: "Maintenance", pin: "" });
@@ -1128,7 +1116,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     setRestockModal(null);
   };
 
-  // â”€â”€ Checkout/Return barcode scanner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Checkout/Return barcode scanner ──────────────────────────────────────
   const startCheckoutScanner = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       flash("Camera not available on this browser.", "error");
@@ -1148,8 +1136,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             const detector = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code'] });
             detectCheckoutBarcode(detector);
           } else {
-            // No BarcodeDetector â€” camera is live so user can see barcode and type it
-            flash("Live scanning not supported on this browser â€” camera is open so you can read the code and type it below.", "info");
+            // No BarcodeDetector — camera is live so user can see barcode and type it
+            flash("Live scanning not supported on this browser — camera is open so you can read the code and type it below.", "info");
           }
         } else {
           flash("Camera error: video element not ready. Try again.", "error");
@@ -1160,7 +1148,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       checkoutScannerActiveRef.current = false;
       setCheckoutScannerActive(false);
       if (err.name === 'NotAllowedError') {
-        flash("Camera permission denied. Go to browser settings â†’ Site settings â†’ Camera â†’ Allow.", "error");
+        flash("Camera permission denied. Go to browser settings → Site settings → Camera → Allow.", "error");
       } else {
         flash("Camera failed: " + err.message, "error");
       }
@@ -1168,7 +1156,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   };
 
   const detectCheckoutBarcode = async (detector) => {
-    // Use ref not state â€” avoids stale closure
+    // Use ref not state — avoids stale closure
     if (!checkoutScannerActiveRef.current || !checkoutVideoRef.current) return;
     try {
       const barcodes = await detector.detect(checkoutVideoRef.current);
@@ -1201,10 +1189,10 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       setFormItems(prev => prev.includes(it.id) ? prev : [...prev, it.id]);
       setScanInput("");
       setScanModal(false);
-      flash(`âœ“ Scanned: ${it.item}`);
+      flash(`✓ Scanned: ${it.item}`);
     } else {
       setScanInput(code);
-      flash(`Code "${code}" not found â€” check manually`, "error");
+      flash(`Code "${code}" not found — check manually`, "error");
     }
   };
 
@@ -1248,13 +1236,13 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   }));
 
   const TABS = [
-    { key: "dashboard", label: "Dashboard", icon: "âŠž" },
-    { key: "checkout", label: "Check Out / Return", icon: "â‡„" },
-    { key: "consumables", label: "Consumables", icon: "â–¼" },
-    { key: "access", label: "Access Log", icon: "ðŸ”‘" },
-    { key: "inventory", label: "Inventory", icon: "â˜°" },
-    { key: "users", label: "Users", icon: "ðŸ‘¤" },
-    { key: "history", label: "Activity Log", icon: "ðŸ“‹" },
+    { key: "dashboard", label: "Dashboard", icon: "⊞" },
+    { key: "checkout", label: "Check Out / Return", icon: "⇄" },
+    { key: "consumables", label: "Consumables", icon: "▼" },
+    { key: "access", label: "Access Log", icon: "🔑" },
+    { key: "inventory", label: "Inventory", icon: "☰" },
+    { key: "users", label: "Users", icon: "👤" },
+    { key: "history", label: "Activity Log", icon: "📋" },
   ];
 
   return (
@@ -1272,7 +1260,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
       `}</style>
 
-      {/* Gallery picker â€” no capture attr so Android shows Photos/Files */}
+      {/* Gallery picker — no capture attr so Android shows Photos/Files */}
       <input
         ref={fileInputRef}
         type="file"
@@ -1280,7 +1268,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         onChange={handlePhotoCapture}
         style={{ display: "none" }}
       />
-      {/* Camera input â€” capture forces direct camera open */}
+      {/* Camera input — capture forces direct camera open */}
       <input
         ref={cameraInputRef}
         type="file"
@@ -1298,17 +1286,58 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             <img src={CCOAN_LOGO_WHITE} alt="CCOAN" style={S.logoImg} onError={e => { e.target.style.display = "none"; }} />
             <div>
               <div style={S.headerTitle}>WAREHOUSE TRACKER</div>
-              <div style={S.headerSub}>CCOAN â€” Almere</div>
+              <div style={S.headerSub}>{CONFIG.country} {CONFIG.name}</div>
             </div>
           </div>
           <div style={S.headerRight}>
-            <span style={S.userBadge}>ðŸ‘¤ {currentUser} {currentUserRole && `(${currentUserRole})`}</span>
+            <span style={S.userBadge}>👤 {currentUser} {currentUserRole && `(${currentUserRole})`}</span>
             {IS_DEMO && <span style={S.demoBadge}>DEMO</span>}
-            <button onClick={onLogout} style={S.logoutBtn} title="Logout">ðŸ”“</button>
+            <button onClick={onLogout} style={S.logoutBtn} title="Logout">🔓</button>
             <button style={S.hamburger} onClick={() => setMenuOpen(!menuOpen)}>
               <span style={S.bar}/><span style={S.bar}/><span style={S.bar}/>
             </button>
           </div>
+        </div>
+
+        {/* Branch selector row */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "4px 24px",
+          borderTop: "1px solid " + C.border,
+          gap: 8,
+        }}>
+          <span style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            Branch
+          </span>
+          <select
+            value={detectBranch()}
+            onChange={e => switchBranch(e.target.value)}
+            style={{
+              padding: "3px 28px 3px 10px",
+              borderRadius: 5,
+              border: "1px solid " + C.accentBorder,
+              background: C.surface,
+              color: C.text,
+              fontSize: 12,
+              fontFamily: "inherit",
+              fontWeight: 600,
+              cursor: "pointer",
+              outline: "none",
+              appearance: "none",
+              WebkitAppearance: "none",
+              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238890A4' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E")`,
+              backgroundRepeat: "no-repeat",
+              backgroundPosition: "right 8px center",
+            }}
+          >
+            {getAllBranches().map(b => (
+              <option key={b.id} value={b.id}>
+                {b.country} {b.name}
+              </option>
+            ))}
+          </select>
         </div>
       </header>
 
@@ -1329,21 +1358,21 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 16 }}>
             <button onClick={() => {
               if (!window.confirm("Clear local cache and re-sync from server? This will discard any unsynced local-only data.")) return;
-              localStorage.removeItem('warehouseInventory');
-              localStorage.removeItem('warehouseLog');
-              localStorage.removeItem('warehouseAccessLog');
-              flash("Cache cleared â€” syncing from server...", "info");
+              localStorage.removeItem(LS_INVENTORY);
+              localStorage.removeItem(LS_LOG);
+              localStorage.removeItem(LS_ACCESS);
+              flash("Cache cleared — syncing from server...", "info");
               syncFromBackend(setInventory, setLog, setAccessLog, setUsers);
-              setTimeout(() => flash("âœ“ Synced fresh from server"), 1500);
+              setTimeout(() => flash("✓ Synced fresh from server"), 1500);
             }} style={{ ...S.smBtn, color: C.orange, borderColor: C.orange }}>
-              ðŸ—‘ Clear Local Cache
+              🗑 Clear Local Cache
             </button>
             <button onClick={async () => {
               flash("Syncing...", "info");
               await syncFromBackend(setInventory, setLog, setAccessLog, setUsers);
-              flash("âœ“ Synced");
+              flash("✓ Synced");
             }} style={{ ...S.smBtn, color: C.accent, borderColor: C.accent }}>
-              ðŸ”„ Sync Now
+              🔄 Sync Now
             </button>
           </div>
           <div style={S.statsGrid}>
@@ -1389,7 +1418,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 {log.slice(0, 8).map((l, i) => <tr key={i}>
                   <td style={S.td}>{l.timestamp}</td><td style={S.td}>{l.user}</td>
                   <td style={S.td}><ABadge a={l.action}/></td>
-                  <td style={S.td}>{l.itemName}</td><td style={S.td}>{l.notes || "â€”"}</td>
+                  <td style={S.td}>{l.itemName}</td><td style={S.td}>{l.notes || "—"}</td>
                 </tr>)}
               </tbody></table></div>
             )}
@@ -1415,7 +1444,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
                   <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 8, border: `2px solid ${formAction === "checkout" ? C.red : C.borderLight}`, background: formAction === "checkout" ? "rgba(224,64,64,0.12)" : C.surface, cursor: "pointer", userSelect: "none" }}
                     onClick={() => { setFormAction("checkout"); setFormItems([]); }}>
-                    <span style={{ fontSize: 20 }}>{formAction === "checkout" ? "ðŸ”´" : "âšª"}</span>
+                    <span style={{ fontSize: 20 }}>{formAction === "checkout" ? "🔴" : "⚪"}</span>
                     <span>
                       <strong style={{ color: C.text, display: "block" }}>Check Out</strong>
                       <span style={{ color: C.textMuted, fontSize: 11 }}>Taking a tool from warehouse</span>
@@ -1423,7 +1452,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                   </label>
                   <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 8, border: `2px solid ${formAction === "return" ? C.green : C.borderLight}`, background: formAction === "return" ? "rgba(46,170,90,0.12)" : C.surface, cursor: "pointer", userSelect: "none" }}
                     onClick={() => { setFormAction("return"); setFormItems([]); }}>
-                    <span style={{ fontSize: 20 }}>{formAction === "return" ? "ðŸŸ¢" : "âšª"}</span>
+                    <span style={{ fontSize: 20 }}>{formAction === "return" ? "🟢" : "⚪"}</span>
                     <span>
                       <strong style={{ color: C.text, display: "block" }}>Return</strong>
                       <span style={{ color: C.textMuted, fontSize: 11 }}>Bringing a tool back</span>
@@ -1438,7 +1467,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             {(currentUserRole === "Warehouse Manager / Admin" || currentUserRole === "Admin" || currentUserRole === "Warehouse Manager") && (
               <div style={{ marginTop: 16, marginBottom: 16 }}>
                 <label style={{ ...S.lbl, display: "flex", alignItems: "center", gap: 8 }}>
-                  ðŸ‘¥ Act On Behalf Of (Admin Only)
+                  👥 Act On Behalf Of (Admin Only)
                   <button 
                     onClick={() => {
                       setOnBehalfOfUser("");
@@ -1446,7 +1475,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                     }} 
                     style={{ ...S.smBtn, padding: "4px 8px", fontSize: 11, opacity: onBehalfOfUser ? 1 : 0.3 }}
                     disabled={!onBehalfOfUser}>
-                    âœ• Clear
+                    ✕ Clear
                   </button>
                 </label>
                 <SearchableSelect
@@ -1461,8 +1490,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 />
                 {onBehalfOfUser && (
                   <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(255,193,7,0.15)", borderRadius: 6, border: "1px solid #ffc107", fontSize: 13, color: C.text }}>
-                    âš ï¸ Acting as <strong>{onBehalfOfUser}</strong>
-                    {formAction === "return" && ` â€” Showing only ${onBehalfOfUser}'s checked-out items`}
+                    ⚠️ Acting as <strong>{onBehalfOfUser}</strong>
+                    {formAction === "return" && ` — Showing only ${onBehalfOfUser}'s checked-out items`}
                   </div>
                 )}
               </div>
@@ -1480,7 +1509,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                     placeholder="Choose tool(s)..."
                   />
                 </div>
-                <button onClick={() => setScanModal(true)} style={S.scanBtn} title="Scan QR">ðŸ“·</button>
+                <button onClick={() => setScanModal(true)} style={S.scanBtn} title="Scan QR">📷</button>
               </div>
             </div>
             
@@ -1491,11 +1520,11 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             
             <div style={{ marginTop: 8, padding: "12px 16px", background: C.surfaceRaised, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
               <p style={{ color: C.textMuted, fontSize: 12, margin: "0 0 8px 0" }}>
-                âœ… {formItems.length > 0 ? `${formItems.length} item(s) selected â€” press the button below to confirm` : "Select item(s) above, then press the button below"}
+                ✅ {formItems.length > 0 ? `${formItems.length} item(s) selected — press the button below to confirm` : "Select item(s) above, then press the button below"}
               </p>
               <button onClick={doMultiTransaction} 
                 style={{ ...S.pBtn, background: formAction === "checkout" ? C.red : C.green, fontSize: 16, padding: "14px 20px", opacity: formItems.length === 0 ? 0.5 : 1 }}>
-                {formAction === "checkout" ? "â¬† CONFIRM CHECK OUT" : "â¬‡ CONFIRM RETURN"} ({formItems.length} item{formItems.length !== 1 ? "s" : ""})
+                {formAction === "checkout" ? "⬆ CONFIRM CHECK OUT" : "⬇ CONFIRM RETURN"} ({formItems.length} item{formItems.length !== 1 ? "s" : ""})
               </button>
             </div>
           </div>
@@ -1528,7 +1557,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                       placeholder="Choose item(s)..."
                     />
                   </div>
-                  <button onClick={() => setScanModal(true)} style={S.scanBtn}>ðŸ“·</button>
+                  <button onClick={() => setScanModal(true)} style={S.scanBtn}>📷</button>
                 </div>
               </div>
               
@@ -1544,7 +1573,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             </div>
             
             <button onClick={doMultiConsumable} style={{ ...S.pBtn, background: C.orange }}>
-              â–¼ Log Consumable Usage ({consumableItems.length} item{consumableItems.length !== 1 ? 's' : ''})
+              ▼ Log Consumable Usage ({consumableItems.length} item{consumableItems.length !== 1 ? 's' : ''})
             </button>
           </div>
         </div>)}
@@ -1571,7 +1600,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <input type="text" value={accessPurpose} onChange={e => setAccessPurpose(e.target.value)} placeholder="e.g. Picking up drill for maintenance" style={S.inp}/>
               </div>
             </div>
-            <button onClick={doAccess} style={S.pBtn}>ðŸ”‘ Log Warehouse Entry</button>
+            <button onClick={doAccess} style={S.pBtn}>🔑 Log Warehouse Entry</button>
           </div>
           <div style={{ ...S.card, marginTop: 20 }}><h3 style={S.cardT}>Access History</h3>
             {accessLog.length === 0 ? <p style={S.empty}>No access entries yet.</p> : (
@@ -1614,11 +1643,11 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                   <button onClick={() => setAssetDetailItem(i)} style={{ ...S.lnkBtn, fontFamily: "monospace", fontWeight: 700, fontSize: 11, background: C.accentDim, padding: "2px 7px", borderRadius: 3, textDecoration: "none" }}>{i.id}</button>
                 </td>
                 <td style={{ ...S.td, fontWeight: 500, maxWidth: 220, whiteSpace: "normal", lineHeight: 1.3 }}>{i.item}</td>
-                <td style={S.td}>{i.brand || "â€”"}</td>
+                <td style={S.td}>{i.brand || "—"}</td>
                 <td style={S.td}><SBadge status={i.status} qty={i.qty}/></td>
-                <td style={S.td}>{i.model || "â€”"}</td>
+                <td style={S.td}>{i.model || "—"}</td>
                 <td style={S.td}>{i.category}</td>
-                <td style={{ ...S.td, fontSize: 11, color: C.textMuted }}>{i.createdAt ? i.createdAt.slice(0, 10) : "â€”"}</td>
+                <td style={{ ...S.td, fontSize: 11, color: C.textMuted }}>{i.createdAt ? i.createdAt.slice(0, 10) : "—"}</td>
                 <td style={S.td}>{i.qty}</td>
                 <td style={S.td}>
                   {i.photoUrl
@@ -1633,17 +1662,17 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                           })()} 
                           target="_blank" 
                           rel="noopener noreferrer" 
-                          style={S.photoLnk}>ðŸ“¸ View</a>
+                          style={S.photoLnk}>📸 View</a>
                       : <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(""); }} style={S.lnkBtn}>+ Photo</button>}
                 </td>
                 <td style={S.td}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {isAdmin && <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">âœï¸</button>}
-                    <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(i.photoUrl || ""); }} style={S.tiny} title="Photo">ðŸ“·</button>
+                    {isAdmin && <button onClick={() => { setEditItem({ ...i, _originalId: i.id }); setEditItemModal(true); }} style={{ ...S.tiny, color: C.accent, borderColor: C.accent }} title="Edit">✏️</button>}
+                    <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(i.photoUrl || ""); }} style={S.tiny} title="Photo">📷</button>
                     {i.type === "Consumable" && (
                       <button onClick={() => { setRestockModal(i.id); setRestockQty(1); }} style={{ ...S.tiny, color: C.green, borderColor: C.green }} title="Restock">+</button>
                     )}
-                    {isAdmin && <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">âœ•</button>}
+                    {isAdmin && <button onClick={() => setConfirmDel(i.id)} style={{ ...S.tiny, color: C.red }} title="Delete">✕</button>}
                   </div>
                 </td>
               </tr>
@@ -1698,7 +1727,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}>{l.timestamp}</td><td style={{ ...S.td, fontWeight: 600 }}>{l.user}</td>
                 <td style={S.td}><ABadge a={l.action}/></td>
                 <td style={S.td}>{l.itemName}</td><td style={S.td}><code style={S.code}>{l.itemId}</code></td>
-                <td style={S.td}>{l.qty}</td><td style={S.td}>{l.notes || "â€”"}</td>
+                <td style={S.td}>{l.qty}</td><td style={S.td}>{l.notes || "—"}</td>
               </tr>)}
             </tbody></table></div>
           )}
@@ -1709,8 +1738,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       <footer style={S.footer}>
         <img src={CCOAN_LOGO_WHITE} alt="" style={{ height: 18, opacity: 0.4 }} onError={e => { e.target.style.display = "none"; }}/>
         <span>CCOAN Warehouse Tracker</span>
-        <span style={{ opacity: 0.25 }}>â€¢</span>
-        <span>V4 Enhanced â€¢ Logged in as {currentUser}</span>
+        <span style={{ opacity: 0.25 }}>•</span>
+        <span>V4 Enhanced • Logged in as {currentUser}</span>
       </footer>
 
       {/* ========== MODALS ========== */}
@@ -1719,17 +1748,17 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       <Modal open={addItemModal} onClose={() => { setAddItemModal(false); stopBarcodeScanner(); setPhotoPreview(""); setScannedBarcode(""); }} title="Add New Inventory Item" wide>
         <div style={S.mf}>
           
-          {/* Barcode Scanner Section â€” video always in DOM so ref is always available */}
+          {/* Barcode Scanner Section — video always in DOM so ref is always available */}
           <div style={{ ...S.scannerSection, marginBottom: 16 }}>
-            <label style={S.lbl}>ðŸ“· Scan Product Barcode (Optional)</label>
-            {/* Video always rendered, just hidden â€” this ensures videoRef.current is never null */}
+            <label style={S.lbl}>📷 Scan Product Barcode (Optional)</label>
+            {/* Video always rendered, just hidden — this ensures videoRef.current is never null */}
             <div style={{ display: scannerActive ? "block" : "none" }}>
               <div style={S.scannerContainer}>
                 <video ref={videoRef} autoPlay playsInline muted style={S.scannerVideo} />
                 <div style={S.scannerOverlay} />
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
-                <span style={{ color: C.green, fontSize: 13 }}>ðŸ“· Scanningâ€¦ point at barcode</span>
+                <span style={{ color: C.green, fontSize: 13 }}>📷 Scanning… point at barcode</span>
                 <button onClick={stopBarcodeScanner} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Stop</button>
               </div>
             </div>
@@ -1740,7 +1769,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             )}
             {scannedBarcode && (
               <p style={{ color: C.green, marginTop: 8, fontSize: 12 }}>
-                âœ“ Scanned: <strong>{scannedBarcode}</strong>
+                ✓ Scanned: <strong>{scannedBarcode}</strong>
               </p>
             )}
           </div>
@@ -1803,21 +1832,21 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
 
           {/* V4: Photo Capture Section */}
           <div style={{ marginBottom: 16 }}>
-            <label style={S.lbl}>ðŸ“¸ Item Photo (Optional)</label>
+            <label style={S.lbl}>📸 Item Photo (Optional)</label>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button
                 onClick={() => cameraInputRef.current?.click()}
                 disabled={uploadingPhoto}
                 style={{ ...S.pBtn, background: uploadingPhoto ? C.textDim : C.brandBright, flex: 1 }}
               >
-                {uploadingPhoto ? "Uploading..." : "ðŸ“· Take Photo"}
+                {uploadingPhoto ? "Uploading..." : "📷 Take Photo"}
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploadingPhoto}
                 style={{ ...S.pBtn, background: uploadingPhoto ? C.textDim : C.brand, flex: 1 }}
               >
-                ðŸ–¼ Choose from Gallery
+                🖼 Choose from Gallery
               </button>
             </div>
             {photoPreview && (
@@ -1827,7 +1856,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             )}
             {ni.photoUrl && !uploadingPhoto && (
               <p style={{ color: C.green, fontSize: 12, marginTop: 8 }}>
-                âœ“ Photo uploaded: <a href={ni.photoUrl} target="_blank" rel="noopener noreferrer" style={S.photoLnk}>View</a>
+                ✓ Photo uploaded: <a href={ni.photoUrl} target="_blank" rel="noopener noreferrer" style={S.photoLnk}>View</a>
               </p>
             )}
             <span style={S.hint}>
@@ -1841,7 +1870,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         </div>
       </Modal>
 
-      {/* â”€â”€ Edit Inventory Item Modal â”€â”€ */}
+      {/* ── Edit Inventory Item Modal ── */}
       <Modal open={editItemModal} onClose={() => { setEditItemModal(false); setEditItem(null); }} title="Edit Inventory Item" wide>
         {editItem && (
           <div style={S.mf}>
@@ -1898,7 +1927,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               <span style={S.hint}>Paste a direct link or leave as-is to keep existing photo</span>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
-              <button onClick={doEditItem} style={S.pBtn}>ðŸ’¾ Save Changes</button>
+              <button onClick={doEditItem} style={S.pBtn}>💾 Save Changes</button>
               <button onClick={() => { setEditItemModal(false); setEditItem(null); }} style={S.smBtn}>Cancel</button>
             </div>
           </div>
@@ -1906,13 +1935,13 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
       </Modal>
 
 
-      {/* â”€â”€ Asset Detail Popup (Code hyperlink click) â”€â”€ */}
+      {/* ── Asset Detail Popup (Code hyperlink click) ── */}
       {assetDetailItem && (
         <div style={S.overlay} onClick={() => setAssetDetailItem(null)}>
           <div style={{ ...S.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
             <div style={S.modalHead}>
               <h3 style={{ ...S.modalTitle, fontSize: 13, color: C.textMuted, fontFamily: "monospace" }}>{assetDetailItem.id}</h3>
-              <button onClick={() => setAssetDetailItem(null)} style={S.modalX}>âœ•</button>
+              <button onClick={() => setAssetDetailItem(null)} style={S.modalX}>✕</button>
             </div>
             <div style={S.modalBody}>
               <p style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 14, marginTop: 0 }}>{assetDetailItem.item}</p>
@@ -1954,11 +1983,11 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                     ["Shelf", assetDetailItem.shelf],
                     ["Held By", assetDetailItem.checkedOutBy],
                     ["Serial No", assetDetailItem.serialNo],
-                    ["Date Created", assetDetailItem.createdAt ? assetDetailItem.createdAt.slice(0, 10) : "â€”"],
+                    ["Date Created", assetDetailItem.createdAt ? assetDetailItem.createdAt.slice(0, 10) : "—"],
                   ].map(([label, value]) => (
                     <tr key={label} style={{ borderBottom: `1px solid ${C.border}18` }}>
                       <td style={{ padding: "5px 8px 5px 0", color: C.textMuted, fontWeight: 600, whiteSpace: "nowrap", verticalAlign: "top" }}>{label}</td>
-                      <td style={{ padding: "5px 0", color: C.text }}>{value || "â€”"}</td>
+                      <td style={{ padding: "5px 0", color: C.text }}>{value || "—"}</td>
                     </tr>
                   ))}
                 </table>
@@ -1966,7 +1995,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               <div style={{ display: "flex", gap: 10 }}>
                 {isAdmin && (
                   <button onClick={() => { setEditItem({ ...assetDetailItem, _originalId: assetDetailItem.id }); setEditItemModal(true); setAssetDetailItem(null); }}
-                    style={{ ...S.pBtn, flex: 1 }}>âœï¸ Edit Asset</button>
+                    style={{ ...S.pBtn, flex: 1 }}>✏️ Edit Asset</button>
                 )}
                 <button onClick={() => setAssetDetailItem(null)} style={{ ...S.smBtn, flex: 1, textAlign: "center" }}>Close</button>
               </div>
@@ -2010,23 +2039,23 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
         </div>
       </Modal>
 
-      <Modal open={scanModal} onClose={() => { setScanModal(false); stopCheckoutScanner(); }} title="ðŸ“· Scan Item Barcode">
+      <Modal open={scanModal} onClose={() => { setScanModal(false); stopCheckoutScanner(); }} title="📷 Scan Item Barcode">
         <div style={S.mf}>
-          {/* Camera scanner â€” video always in DOM so ref is always available */}
+          {/* Camera scanner — video always in DOM so ref is always available */}
           <div style={{ marginBottom: 16 }}>
             {/* Always rendered, toggled via CSS display */}
             <div style={{ display: checkoutScannerActive ? "block" : "none" }}>
               <video ref={checkoutVideoRef} autoPlay playsInline muted
                 style={{ width: "100%", borderRadius: 8, maxHeight: 260, objectFit: "cover", background: "#000", display: "block" }} />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                <span style={{ color: C.green, fontSize: 13 }}>ðŸ“· Scanningâ€¦ point camera at barcode</span>
+                <span style={{ color: C.green, fontSize: 13 }}>📷 Scanning… point camera at barcode</span>
                 <button onClick={stopCheckoutScanner} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Stop</button>
               </div>
             </div>
             {!checkoutScannerActive && (
               <div style={{ textAlign: "center" }}>
                 <button onClick={startCheckoutScanner} style={{ ...S.pBtn, background: C.brandBright, fontSize: 15 }}>
-                  ðŸ“· Open Camera Scanner
+                  📷 Open Camera Scanner
                 </button>
                 <p style={{ color: C.textMuted, fontSize: 12, marginTop: 8 }}>
                   Point your camera at the item's barcode or QR code
@@ -2082,7 +2111,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
             </span>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={doRestock} style={{ ...S.pBtn, background: C.green }}>âœ“ Restock</button>
+            <button onClick={doRestock} style={{ ...S.pBtn, background: C.green }}>✓ Restock</button>
             <button onClick={() => setRestockModal(null)} style={S.smBtn}>Cancel</button>
           </div>
         </div>
