@@ -1763,120 +1763,82 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           <div style={S.card}><div style={S.tw}><table style={S.tbl}><thead><tr>
             <th style={S.th}>Name</th><th style={S.th}>Role</th><th style={S.th}>Status</th><th style={S.th}>Actions</th>
           </tr></thead><tbody>
-            {users.map(u => (
-              <tr key={u.name} style={!u.active ? { opacity: 0.4 } : {}}>
-                <td style={{ ...S.td, fontWeight: 600 }}>
-                  {u.name}
-                  {u.role === SUPER_ADMIN_ROLE && (
-                    <span style={{
-                      marginLeft: 8,
-                      fontSize: 10,
-                      fontWeight: 700,
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      background: 'rgba(232,146,42,0.18)',
-                      color: C.orange,
-                      letterSpacing: '0.05em',
-                      textTransform: 'uppercase',
-                      border: `1px solid ${C.orangeDim}`,
-                    }}>Owner</span>
-                  )}
-                </td>
-                <td style={S.td}>
-                  {editingRoleFor?.name === u.name ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <select
-                        value={editingRoleValue}
-                        onChange={e => setEditingRoleValue(e.target.value)}
-                        autoFocus
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: 5,
-                          border: `1px solid ${C.accentBorder}`,
-                          background: C.surface,
-                          color: C.text,
-                          fontSize: 13,
-                          fontFamily: 'inherit',
-                          outline: 'none',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {ROLES_LIST.map(r => (
-                          <option key={r} value={r}>{r}</option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={() => handleRoleChange(u.name, editingRoleValue)}
-                        style={{
-                          padding: '4px 10px',
-                          borderRadius: 5,
-                          border: 'none',
-                          background: C.green,
-                          color: C.white,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          fontFamily: 'inherit',
-                        }}
-                      >Save</button>
-                      <button
-                        onClick={() => setEditingRoleFor(null)}
-                        style={{
-                          padding: '4px 10px',
-                          borderRadius: 5,
-                          border: `1px solid ${C.border}`,
-                          background: 'transparent',
-                          color: C.textMuted,
-                          fontSize: 12,
-                          cursor: 'pointer',
-                          fontFamily: 'inherit',
-                        }}
-                      >Cancel</button>
-                    </div>
-                  ) : (
-                    <span>{u.role}</span>
-                  )}
-                </td>
-                <td style={S.td}><span style={{ ...S.badge, background: u.active ? C.green : C.textDim }}>{u.active ? "Active" : "Inactive"}</span></td>
-                <td style={S.td}>
-                  {canManageUser(currentUserRole, u.name, u.role) ? (
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {editingRoleFor?.name !== u.name && (
-                        <button
-                          onClick={() => {
-                            setEditingRoleFor({ name: u.name, currentRole: u.role });
-                            setEditingRoleValue(u.role);
-                          }}
+            {users.map(u => {
+              const isProtectedRow = u.name === SUPER_ADMIN_NAME || u.role === SUPER_ADMIN_ROLE;
+              return (
+                <tr key={u.name} style={!u.active ? { opacity: 0.4 } : {}}>
+                  <td style={{ ...S.td, fontWeight: 600 }}>
+                    {u.name}
+                    {u.role === SUPER_ADMIN_ROLE && (
+                      <span style={{
+                        marginLeft: 8, fontSize: 10, fontWeight: 700,
+                        padding: '2px 6px', borderRadius: 4,
+                        background: 'rgba(232,146,42,0.18)', color: C.orange,
+                        letterSpacing: '0.05em', textTransform: 'uppercase',
+                        border: `1px solid ${C.orangeDim}`,
+                      }}>Owner</span>
+                    )}
+                  </td>
+                  <td style={S.td}>
+                    {editingRoleFor?.name === u.name ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <select
+                          value={editingRoleValue}
+                          onChange={e => setEditingRoleValue(e.target.value)}
+                          autoFocus
                           style={{
-                            padding: '4px 10px',
-                            borderRadius: 5,
+                            padding: '4px 8px', borderRadius: 5,
                             border: `1px solid ${C.accentBorder}`,
-                            background: 'transparent',
-                            color: C.accent,
-                            fontSize: 12,
-                            cursor: 'pointer',
-                            fontFamily: 'inherit',
+                            background: C.surface, color: C.text,
+                            fontSize: 13, fontFamily: 'inherit', outline: 'none', cursor: 'pointer',
                           }}
-                        >Edit Role</button>
-                      )}
-                      <button onClick={async () => {
-                        const newActive = !u.active;
-                        setUsers(p => p.map(x => x.name === u.name ? { ...x, active: newActive } : x));
-                        await callBackend({ action: "setUserActive", userName: u.name, active: newActive });
-                        flash(`${u.name} ${newActive ? "activated" : "deactivated"}`);
-                      }} style={S.smBtn}>
-                        {u.active ? "Deactivate" : "Activate"}
-                      </button>
-                      <button onClick={() => { setUsers(p => p.filter(x => x.name !== u.name)); flash(`${u.name} removed`); }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>
-                    </div>
-                  ) : (
-                    u.role === SUPER_ADMIN_ROLE
-                      ? <span style={{ fontSize: 12, color: C.textDim }}>🔒 Protected</span>
-                      : null
-                  )}
-                </td>
-              </tr>
-            ))}
+                        >
+                          {ROLES_LIST.map(r => <option key={r} value={r}>{r}</option>)}
+                        </select>
+                        <button onClick={() => handleRoleChange(u.name, editingRoleValue)} style={{ padding: '4px 10px', borderRadius: 5, border: 'none', background: C.green, color: C.white, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Save</button>
+                        <button onClick={() => setEditingRoleFor(null)} style={{ padding: '4px 10px', borderRadius: 5, border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <span>{u.role}</span>
+                    )}
+                  </td>
+                  <td style={S.td}>
+                    <span style={{ ...S.badge, background: u.active ? C.green : C.textDim }}>
+                      {u.active ? "Active" : "Inactive"}
+                    </span>
+                  </td>
+                  <td style={S.td}>
+                    {isProtectedRow ? (
+                      <span style={{ fontSize: 12, color: C.textDim }}>🔒 Protected</span>
+                    ) : canManageUser(currentUserRole, u.name, u.role) ? (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {editingRoleFor?.name !== u.name && (
+                          <button
+                            onClick={() => {
+                              setEditingRoleFor({ name: u.name, currentRole: u.role });
+                              setEditingRoleValue(u.role);
+                            }}
+                            style={{ padding: '4px 10px', borderRadius: 5, border: `1px solid ${C.accentBorder}`, background: 'transparent', color: C.accent, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}
+                          >Edit Role</button>
+                        )}
+                        <button onClick={async () => {
+                          const newActive = !u.active;
+                          setUsers(p => p.map(x => x.name === u.name ? { ...x, active: newActive } : x));
+                          await callBackend({ action: "setUserActive", userName: u.name, active: newActive });
+                          flash(`${u.name} ${newActive ? "activated" : "deactivated"}`);
+                        }} style={S.smBtn}>
+                          {u.active ? "Deactivate" : "Activate"}
+                        </button>
+                        <button onClick={() => {
+                          setUsers(p => p.filter(x => x.name !== u.name));
+                          flash(`${u.name} removed`);
+                        }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>
+                      </div>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody></table></div></div>
         </div>)}
 
