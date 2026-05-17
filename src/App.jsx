@@ -30,6 +30,7 @@ async function callBackend(payload) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = JSON.parse(await res.text());
     if (!result.success) console.error("Backend error:", result.message);
+    return result;
   } catch (err) {
     console.error("Sync failed:", err.message);
   }
