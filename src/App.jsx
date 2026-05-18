@@ -697,6 +697,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const [photoModal, setPhotoModal] = useState(null);
   const [scanModal, setScanModal] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
+  const [confirmDelUser, setConfirmDelUser] = useState(null); // stores username to delete
   const [restockModal, setRestockModal] = useState(null);
   const [restockQty, setRestockQty] = useState(1);
 
@@ -1830,10 +1831,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                         }} style={S.smBtn}>
                           {u.active ? "Deactivate" : "Activate"}
                         </button>
-                        <button onClick={() => {
-                          setUsers(p => p.filter(x => x.name !== u.name));
-                          flash(`${u.name} removed`);
-                        }} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>
+                        <button onClick={() => setConfirmDelUser(u.name)} style={{ ...S.smBtn, color: C.red, borderColor: C.red }}>Delete</button>
                       </div>
                     ) : null}
                   </td>
@@ -2216,6 +2214,23 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => doDeleteItem(confirmDel)} style={{ ...S.pBtn, background: C.red }}>Yes, Delete</button>
             <button onClick={() => setConfirmDel(null)} style={S.smBtn}>Cancel</button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!confirmDelUser} onClose={() => setConfirmDelUser(null)} title="Confirm Delete User">
+        <div style={S.mf}>
+          <p style={{ color: C.text, marginBottom: 16 }}>
+            Remove <strong>{confirmDelUser}</strong> from the system? This cannot be undone.
+          </p>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={async () => {
+              await callBackend({ action: "deleteUser", userName: confirmDelUser });
+              setUsers(p => p.filter(x => x.name !== confirmDelUser));
+              flash(`${confirmDelUser} removed`);
+              setConfirmDelUser(null);
+            }} style={{ ...S.pBtn, background: C.red }}>Yes, Delete</button>
+            <button onClick={() => setConfirmDelUser(null)} style={S.smBtn}>Cancel</button>
           </div>
         </div>
       </Modal>
