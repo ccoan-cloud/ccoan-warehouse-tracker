@@ -714,6 +714,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
   const [addUserModal, setAddUserModal] = useState(false);
   const [editingRoleFor, setEditingRoleFor] = useState(null);   // stores username being edited
   const [editingRoleValue, setEditingRoleValue] = useState(""); // stores selected new role
+  const [changePinModal, setChangePinModal] = useState(false);
+  const [changePinForm, setChangePinForm] = useState({ current: "", newPin: "", confirm: "" });
   const [photoModal, setPhotoModal] = useState(null);
   const [scanModal, setScanModal] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
@@ -1176,6 +1178,22 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
     setEditingRoleFor(null);
   };
 
+  const handleChangePin = async () => {
+    const { current, newPin, confirm } = changePinForm;
+    if (!current || !newPin || !confirm) return flash("All fields required.", "error");
+    if (!/^\d{4}$/.test(newPin)) return flash("New PIN must be exactly 4 digits.", "error");
+    if (newPin === current) return flash("New PIN must differ from current PIN.", "error");
+    if (newPin !== confirm) return flash("New PIN and confirmation do not match.", "error");
+    const res = await callBackend({ action: "changePin", userName: currentUser, currentPin: current, newPin });
+    if (res?.success) {
+      flash("PIN updated successfully.");
+      setChangePinModal(false);
+      setChangePinForm({ current: "", newPin: "", confirm: "" });
+    } else {
+      flash(res?.message || "Failed to update PIN.", "error");
+    }
+  };
+
   const doSetPhoto = (itemId) => {
     if (!photoUrl.trim()) return flash("Enter a photo URL", "error");
     setInventory(p => p.map(i => i.id === itemId ? { ...i, photoUrl: photoUrl.trim() } : i));
@@ -1385,6 +1403,7 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           <div style={S.headerRight}>
             <span style={S.userBadge}>👤 {currentUser} {currentUserRole && `(${currentUserRole})`}</span>
             {IS_DEMO && <span style={S.demoBadge}>DEMO</span>}
+            <button onClick={() => { setChangePinForm({ current: "", newPin: "", confirm: "" }); setChangePinModal(true); }} style={S.logoutBtn} title="Change PIN">🔑</button>
             <button onClick={onLogout} style={S.logoutBtn} title="Logout">🔓</button>
             <button style={S.hamburger} onClick={() => setMenuOpen(!menuOpen)}>
               <span style={S.bar}/><span style={S.bar}/><span style={S.bar}/>
@@ -2133,6 +2152,36 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
           </div>
         </div>
       )}
+
+      <Modal open={changePinModal} onClose={() => setChangePinModal(false)} title="Change My PIN">
+        <div style={S.mf}>
+          <div style={S.f}>
+            <label style={S.lbl}>Current PIN</label>
+            <input type="password" maxLength="4" pattern="[0-9]*" inputMode="numeric"
+              value={changePinForm.current}
+              onChange={e => setChangePinForm(f => ({ ...f, current: e.target.value }))}
+              placeholder="Enter current PIN" style={S.inp} autoFocus />
+          </div>
+          <div style={S.f}>
+            <label style={S.lbl}>New PIN</label>
+            <input type="password" maxLength="4" pattern="[0-9]*" inputMode="numeric"
+              value={changePinForm.newPin}
+              onChange={e => setChangePinForm(f => ({ ...f, newPin: e.target.value }))}
+              placeholder="Enter new 4-digit PIN" style={S.inp} />
+          </div>
+          <div style={S.f}>
+            <label style={S.lbl}>Confirm New PIN</label>
+            <input type="password" maxLength="4" pattern="[0-9]*" inputMode="numeric"
+              value={changePinForm.confirm}
+              onChange={e => setChangePinForm(f => ({ ...f, confirm: e.target.value }))}
+              placeholder="Re-enter new PIN" style={S.inp} />
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={handleChangePin} style={S.pBtn}>Update PIN</button>
+            <button onClick={() => setChangePinModal(false)} style={S.smBtn}>Cancel</button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={addUserModal} onClose={() => setAddUserModal(false)} title="Add New User">
         <div style={S.mf}>
