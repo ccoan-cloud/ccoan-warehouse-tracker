@@ -179,6 +179,26 @@ const canManageUser = (currentRole, targetName, targetRole) => {
 };
 
 // ============================================================
+// Google Drive Photo URL Helper
+// ============================================================
+// Converts any Drive sharing URL to an embeddable lh3 CDN URL.
+// drive.google.com/uc?export=view has been increasingly blocked
+// by Google for <img> embedding — lh3.googleusercontent.com/d/
+// is the reliable alternative for publicly shared files.
+const toDriveImageUrl = (url) => {
+  if (!url) return url;
+  // Already an lh3 URL — use as-is
+  if (url.includes('lh3.googleusercontent.com')) return url;
+  // Standard sharing URL: /file/d/FILE_ID/view
+  const fileMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return `https://lh3.googleusercontent.com/d/${fileMatch[1]}`;
+  // Legacy uc?export=view&id=FILE_ID
+  const ucMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (ucMatch) return `https://lh3.googleusercontent.com/d/${ucMatch[1]}`;
+  return url;
+};
+
+// ============================================================
 
 const INITIAL_USERS = [
   { name: "Samuel", role: "Warehouse Manager / Admin", active: true },
@@ -1726,18 +1746,11 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
                 <td style={S.td}>{i.qty}</td>
                 <td style={S.td}>
                   {i.photoUrl
-                    ? <a 
-                        href={(() => {
-                          const url = i.photoUrl;
-                          if (url.includes('drive.google.com/file/d/')) {
-                            const match = url.match(/\/file\/d\/([^\/]+)/);
-                            if (match) return `https://drive.google.com/uc?export=view&id=${match[1]}`;
-                          }
-                          return url;
-                          })()} 
-                          target="_blank" 
-                          rel="noopener noreferrer" 
-                          style={S.photoLnk}>📸 View</a>
+                    ? <a
+                        href={toDriveImageUrl(i.photoUrl)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={S.photoLnk}>📸 View</a>
                       : <button onClick={() => { setPhotoModal(i.id); setPhotoUrl(""); }} style={S.lnkBtn}>+ Photo</button>}
                 </td>
                 <td style={S.td}>
@@ -2074,18 +2087,8 @@ function WarehouseTracker({ currentUser, currentUserRole, onLogout }) {
               <p style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 14, marginTop: 0 }}>{assetDetailItem.item}</p>
               <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
                 {assetDetailItem.photoUrl ? (
-                  <img 
-                    src={(() => {
-                      const url = assetDetailItem.photoUrl;
-                      // Auto-convert Google Drive sharing links to direct image links
-                      if (url.includes('drive.google.com/file/d/')) {
-                        const match = url.match(/\/file\/d\/([^\/]+)/);
-                        if (match) {
-                          return `https://drive.google.com/uc?export=view&id=${match[1]}`;
-                        }
-                      }
-                    return url; // Return as-is if not a Drive link
-                  })()} 
+                  <img
+                    src={toDriveImageUrl(assetDetailItem.photoUrl)} 
                   alt={assetDetailItem.item}
                   style={{ width: 130, height: 130, objectFit: "cover", borderRadius: 8, border: `2px solid ${C.borderLight}`, flexShrink: 0 }}
                   onError={e => { 
